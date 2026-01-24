@@ -1,16 +1,15 @@
-﻿# ProjectState
+# ProjectState
 
 ## Slice Status
-- Current slice: Slice 2 ✅
-- Last commit: 8c54a0e Add frame sampling, hashing, and upload modules with tests
-- Next planned slice: Slice 3 (Validator API verify endpoint + matcher + ffmpeg mocked)
+- Current slice: Slice 3 ✅
+- Last commit: 4c9d99d Add claim verification API and core verification logic
+- Next planned slice: Slice 4 (ffmpeg extraction + real Supabase + portal wiring + retention)
 
 ## Repo Tree (Relevant)
 ```text
 F:.
 |-- apps
 |   `-- capture-client
-|       |-- ... (omitted)
 |       `-- src
 |           |-- constants.ts
 |           |-- models.ts
@@ -29,23 +28,38 @@ F:.
 |               |-- hashQueue.spec.ts
 |               |-- sampler.spec.ts
 |               `-- uploader.spec.ts
+|-- docs
+|   |-- planV1.md
+|   |-- slice1-log.md
+|   |-- slice2-log.md
+|   |-- slice3-log.md
+|   `-- specV0.md
 |-- services
 |   `-- validator-api
 |       |-- validator-api.csproj
+|       |-- Controllers
+|       |   `-- ClaimsController.cs
 |       |-- Models
 |       |   |-- CaptureModels.cs
-|       |   `-- VerificationModels.cs
+|       |   |-- VerificationModels.cs
+|       |   `-- VerifyClaimModels.cs
 |       |-- Services
 |       |   |-- DHash64.cs
-|       |   `-- HammingDistance.cs
-|       |-- Tests
-|       |   |-- DHash64Tests.cs
-|       |   `-- validator-api.Tests.csproj
-|       `-- ... (omitted)
+|       |   |-- HammingDistance.cs
+|       |   |-- HashMatcher.cs
+|       |   |-- ISupabaseHashStore.cs
+|       |   |-- IVideoFrameExtractor.cs
+|       |   |-- ServiceExceptions.cs
+|       |   `-- VerificationService.cs
+|       `-- Tests
+|           |-- DHash64Tests.cs
+|           |-- HashMatcherTests.cs
+|           |-- VerificationServiceTests.cs
+|           `-- validator-api.Tests.csproj
 `-- ... (omitted)
 ```
 
-## Core Interfaces (Slice 1–2)
+## Core Interfaces (Slice 1–3)
 
 ### TypeScript
 
@@ -165,8 +179,6 @@ export class Uploader {
 
 ### C#
 
-Unchanged in Slice 2.
-
 ```csharp
 public static class DHash64
 {
@@ -177,6 +189,64 @@ public static class DHash64
 public static class HammingDistance
 {
     public static int BetweenHex64(string aHex, string bHex);
+}
+
+public record ExtractedFrame(int ElapsedMs, byte[] Rgba, int Width, int Height);
+
+public interface IVideoFrameExtractor
+{
+    Task<IReadOnlyList<ExtractedFrame>> ExtractFramesAsync(
+        Stream videoStream,
+        int intervalMs,
+        CancellationToken ct);
+}
+
+public interface ISupabaseHashStore
+{
+    Task<CaptureSession?> GetSessionAsync(string sessionId, CancellationToken ct);
+    Task<IReadOnlyList<FrameHashRecord>> GetFrameHashesAsync(string sessionId, CancellationToken ct);
+}
+
+public class HashMatcher
+{
+    public HashMatcher(int threshold = 5, int toleranceMs = 200);
+    public (int matched, double avgDist, int maxDist, List<MissingSpan> missingSpans) Match(
+        IReadOnlyList<FrameHashRecord> reference,
+        IReadOnlyList<FrameHashRecord> candidates,
+        int intervalMs);
+}
+
+public class VerificationService
+{
+    public VerificationService(ISupabaseHashStore store, IVideoFrameExtractor extractor);
+    public Task<VerificationResult> VerifyAsync(
+        Stream videoStream,
+        VerifyClaimMetadata metadata,
+        CancellationToken ct);
+}
+
+[ApiController]
+[Route("api/claims")]
+public class ClaimsController : ControllerBase
+{
+    [HttpPost("verify")]
+    [Consumes("multipart/form-data")]
+    public Task<ActionResult<VerificationResult>> Verify([FromForm] VerifyClaimRequest request, CancellationToken ct);
+}
+
+public class VerifyClaimMetadata
+{
+    public string SessionId { get; set; }
+    public long DeviceClockStartEpochMs { get; set; }
+    public int SamplingIntervalMs { get; set; }
+    public string AlgoVersion { get; set; }
+    public int? ToleranceMs { get; set; }
+}
+
+public class VerifyClaimRequest
+{
+    public IFormFile? Video { get; set; }
+    public IFormFile? Metadata { get; set; }
 }
 
 public class CaptureSession
@@ -230,18 +300,35 @@ public class VerificationResult
     public List<MissingSpan> MissingSpans { get; set; }
     public List<string> Notes { get; set; }
 }
+
+public class NotFoundException : Exception
+{
+    public NotFoundException(string message);
+}
+
+public class SessionExpiredException : Exception
+{
+    public SessionExpiredException(string message);
+}
+
+// ValidationException is from System.ComponentModel.DataAnnotations.
+public class ValidationException : Exception;
 ```
 
-## Golden Vector (Cross-runtime)
+## Golden Vector (Canonical)
 
 * Fixture: 18x16, deterministic pattern r=(x*17 + y*31)%256, g=(x*13 + y*7 + 50)%256, b=(x*3 + y*29 + 90)%256, a=255
 * Expected hashHex: 1a1830f0624cf0c0
+* Note: verification-service fixtures are NON-CANONICAL and must not redefine this value.
 
 ## Verification Commands
 
 ```bash
 cd apps/capture-client
 npm test
+
+cd services/validator-api
+dotnet test
 ```
 
 ## Evidence
@@ -250,10 +337,11 @@ npm test
 Test Files 4 passed (4)
 Tests 10 passed (10)
 Duration 870ms (transform 155ms, setup 0ms, collect 550ms, tests 36ms, environment 1ms, prepare 1.10s)
+Passed!  - Failed:     0, Passed:    10, Skipped:     0, Total:    10, Duration: 27 ms - validator-api.Tests.dll (net8.0)
 ```
 
 ## Notes / Assumptions
 
-* Sampler enforces config interval equality with session.samplingIntervalMs and throws on mismatch.
-* FetchSupabaseApi is a stub that throws unless configured; IndexedDbHashQueue is not implemented.
-* Validator API tests were not rerun for this snapshot.
+* Multipart part names are `video` and `metadata`; metadata JSON parsing is case-insensitive.
+* Supabase reads and ffmpeg extraction remain abstracted (mocked) in Slice 3.
+* `docs/slice3-log.md` is documentation-only (clarifies non-canonical service test fixtures).

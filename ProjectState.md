@@ -1,24 +1,34 @@
-# ProjectState
+﻿# ProjectState
 
 ## Slice Status
-- Current slice: Slice 1
-- Last commit: d93ec8b feat: implement slice 1 (scaffolding and core types) - ref Plan v1 Initial project structure and DHash64 implementation
-- Next planned slice: Slice 2 (Capture sampling + queue + uploader skeleton)
+- Current slice: Slice 2 ✅
+- Last commit: 8c54a0e Add frame sampling, hashing, and upload modules with tests
+- Next planned slice: Slice 3 (Validator API verify endpoint + matcher + ffmpeg mocked)
 
 ## Repo Tree (Relevant)
 ```text
 F:.
 |-- apps
 |   `-- capture-client
-|       |-- package.json
-|       |-- tsconfig.json
-|       |-- vitest.config.ts
+|       |-- ... (omitted)
 |       `-- src
+|           |-- constants.ts
 |           |-- models.ts
+|           |-- capture
+|           |   |-- frameSource.ts
+|           |   `-- sampler.ts
 |           |-- hash
 |           |   `-- dhash64.ts
+|           |-- storage
+|           |   `-- hashQueue.ts
+|           |-- supabase
+|           |   |-- supabaseApi.ts
+|           |   `-- uploader.ts
 |           `-- __tests__
-|               `-- dhash64.spec.ts
+|               |-- dhash64.spec.ts
+|               |-- hashQueue.spec.ts
+|               |-- sampler.spec.ts
+|               `-- uploader.spec.ts
 |-- services
 |   `-- validator-api
 |       |-- validator-api.csproj
@@ -28,13 +38,14 @@ F:.
 |       |-- Services
 |       |   |-- DHash64.cs
 |       |   `-- HammingDistance.cs
-|       `-- Tests
-|           |-- DHash64Tests.cs
-|           `-- validator-api.Tests.csproj
+|       |-- Tests
+|       |   |-- DHash64Tests.cs
+|       |   `-- validator-api.Tests.csproj
+|       `-- ... (omitted)
 `-- ... (omitted)
 ```
 
-## Core Interfaces (Slice 1)
+## Core Interfaces (Slice 1–2)
 
 ### TypeScript
 
@@ -74,9 +85,87 @@ export interface FrameHashRecord {
   createdAtEpochMs: number;
   uploadState: "pending" | "uploaded";
 }
+
+export const DEFAULT_INTERVAL_MS = 500;
+export const DEFAULT_BATCH_SIZE = 100;
+export const DEFAULT_ALGO_VERSION: "dhash64_v1" = "dhash64_v1";
+
+export interface FrameData {
+  rgba: Uint8ClampedArray;
+  width: number;
+  height: number;
+}
+
+export interface FrameSource {
+  readFrame(): Promise<FrameData>;
+}
+
+export function makeSolidColorFrameSource(
+  width: number,
+  height: number,
+  rgba: [number, number, number, number]
+): FrameSource;
+
+export interface SamplerConfig {
+  samplingIntervalMs: number;
+}
+
+export interface SamplerDeps {
+  frameSource: FrameSource;
+  queue: HashQueue;
+  now: () => number;
+}
+
+export class Sampler {
+  constructor(session: CaptureSession, config: SamplerConfig, deps: SamplerDeps);
+  start(): void;
+  stop(): void;
+}
+
+export interface HashQueue {
+  enqueue(record: FrameHashRecord): Promise<void>;
+  getOldestPending(limit: number): Promise<FrameHashRecord[]>;
+  markUploaded(sessionId: string, sampleIndex: number): Promise<void>;
+  countPending?(sessionId?: string): Promise<number>;
+}
+
+export class InMemoryHashQueue implements HashQueue {
+  enqueue(record: FrameHashRecord): Promise<void>;
+  getOldestPending(limit: number): Promise<FrameHashRecord[]>;
+  markUploaded(sessionId: string, sampleIndex: number): Promise<void>;
+  countPending(sessionId?: string): Promise<number>;
+}
+
+export interface SupabaseApi {
+  insertSession(session: CaptureSession): Promise<void>;
+  insertFrameHashes(records: FrameHashRecord[]): Promise<void>;
+}
+
+export interface SupabaseConfig {
+  url?: string;
+  anonKey?: string;
+}
+
+export class FetchSupabaseApi implements SupabaseApi {
+  constructor(config: SupabaseConfig);
+  insertSession(session: CaptureSession): Promise<void>;
+  insertFrameHashes(records: FrameHashRecord[]): Promise<void>;
+}
+
+export interface UploaderConfig {
+  batchSize: number;
+}
+
+export class Uploader {
+  constructor(queue: HashQueue, api: SupabaseApi, config?: Partial<UploaderConfig>);
+  uploadPending(): Promise<void>;
+  attachOnlineListener(): void;
+}
 ```
 
 ### C#
+
+Unchanged in Slice 2.
 
 ```csharp
 public static class DHash64
@@ -153,22 +242,18 @@ public class VerificationResult
 ```bash
 cd apps/capture-client
 npm test
-
-cd services/validator-api
-dotnet test .\Tests\validator-api.Tests.csproj
 ```
 
 ## Evidence
 
 ```text
-✓ src/__tests__/dhash64.spec.ts (4 tests)
-Test Files 1 passed (1)
-Tests 4 passed (4)
-
-Passed!  - Failed:     0, Passed:     3, Skipped:     0, Total:     3, Duration: 2 ms - validator-api.Tests.dll (net8.0)
+Test Files 4 passed (4)
+Tests 10 passed (10)
+Duration 870ms (transform 155ms, setup 0ms, collect 550ms, tests 36ms, environment 1ms, prepare 1.10s)
 ```
 
 ## Notes / Assumptions
 
-* Repo tree is filtered to omit node_modules, bin, and obj directories.
-* Tests run via Vitest in apps/capture-client and xUnit in services/validator-api (requires Node/npm and .NET SDK).
+* Sampler enforces config interval equality with session.samplingIntervalMs and throws on mismatch.
+* FetchSupabaseApi is a stub that throws unless configured; IndexedDbHashQueue is not implemented.
+* Validator API tests were not rerun for this snapshot.

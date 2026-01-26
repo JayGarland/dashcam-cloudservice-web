@@ -1,27 +1,31 @@
 # ProjectState
 
 ## Slice Status
-- Current slice: Slice 4A ✅
+- Current slice: Slice 4B ✅ DONE
 - Last commit: 4c9d99d Add claim verification API and core verification logic
-- Next planned slice: Slice 4 (ffmpeg extraction + portal wiring + retention)
+- Next planned slice: Slice 4C (ffmpeg extraction + portal wiring)
 - Slice 4A (DONE ✅):
   - SupabaseHashStore real HTTP client via PostgREST
   - SupabaseOptions config keys + DI wiring helper
   - Unit tests with mocked HttpMessageHandler
-- Slice 4 supabase setup (DONE ✅):
-  - Supabase setup documentation + SQL migrations
-  - Schema: capture_sessions + frame_hashes tables
-  - RLS policies for secure client/server access
-  - Retention cleanup function
-  - Configuration scaffolding (no secrets committed)
+- Slice 4B (DONE ✅):
+  - Supabase schema: capture_sessions + frame_hashes tables with indexes
+  - RLS policies for secure client (anon key INSERT) / server (service_role SELECT) access
+  - Retention cleanup function: cleanup_expired_sessions(retention_hours)
+  - Documentation hardening: secrets safety, SQL apply order, RLS model
+  - PlantUML diagram updated with database layer
+  - NO secrets committed (gitignore enforced, verified)
 
-**See [docs/supabase-setup.md](docs/supabase-setup.md) for step-by-step instructions.**
+**See [docs/supabase-setup.md](docs/supabase-setup.md) for step-by-step setup instructions.**
+**See [docs/slice4b-log.md](docs/slice4b-log.md) for Slice 4B completion details.**
 
 ## Repo Tree (Relevant)
 ```text
 F:.
 |-- apps
 |   `-- capture-client
+|       |-- .env.example (committed)
+|       |-- .env.local (gitignored - local secrets)
 |       `-- src
 |           |-- constants.ts
 |           |-- models.ts
@@ -46,11 +50,17 @@ F:.
 |   |-- slice1-log.md
 |   |-- slice2-log.md
 |   |-- slice3-log.md
-|   `-- specV0.md
+|   |-- slice4b-log.md
+|   |-- specV0.md
+|   |-- supabase-setup.md
+|   `-- flow
+|       `-- current-system-flow.puml
 |-- services
 |   `-- validator-api
 |       |-- validator-api.csproj
 |       |-- appsettings.json
+|       |-- appsettings.Development.example.json (committed)
+|       |-- appsettings.Development.json (gitignored - local secrets)
 |       |-- Controllers
 |       |   `-- ClaimsController.cs
 |       |-- Models
@@ -74,7 +84,13 @@ F:.
 |           |-- SupabaseHashStoreTests.cs
 |           |-- VerificationServiceTests.cs
 |           `-- validator-api.Tests.csproj
-`-- ... (omitted)
+|-- supabase
+|   |-- migrations
+|   |   |-- 0001_init_capture_sessions_and_frame_hashes.sql
+|   |   `-- 0002_rls_policies.sql
+|   `-- functions
+|       `-- retention_cleanup.sql
+`-- .gitignore (enforces secrets safety)
 ```
 
 ## Core Interfaces (Slice 1–3)
@@ -351,18 +367,40 @@ dotnet test
 
 ## Contracts that MUST remain stable
 
-### Supabase PostgREST reads (validator-api)
-- capture_sessions: `GET {BaseUrl}/rest/v1/capture_sessions?session_id=eq.{sessionId}&select=*`
-- frame_hashes: `GET {BaseUrl}/rest/v1/frame_hashes?session_id=eq.{sessionId}&select=*&order=elapsed_ms.asc`
-- Required headers: `apikey: {ServiceRoleKey}`, `Authorization: Bearer {ServiceRoleKey}`, `Accept: application/json`
-- Ordering constraint: `elapsed_ms asc` for frame hashes
+### Supabase PostgREST API (validator-api reads)
+- **capture_sessions GET**: `{BaseUrl}/rest/v1/capture_sessions?session_id=eq.{sessionId}&select=*`
+- **frame_hashes GET**: `{BaseUrl}/rest/v1/frame_hashes?session_id=eq.{sessionId}&select=*&order=elapsed_ms.asc`
+- **Required headers**: `apikey: {ServiceRoleKey}`, `Authorization: Bearer {ServiceRoleKey}`, `Accept: application/json`
+- **Ordering constraint**: `elapsed_ms asc` for frame hashes (critical for matching algorithm)
 
-## Repo Reality Snapshot (Slice 4A)
+### Supabase PostgREST API (capture-client writes)
+- **capture_sessions INSERT**: `{BaseUrl}/rest/v1/capture_sessions` (POST with anon key)
+- **frame_hashes INSERT**: `{BaseUrl}/rest/v1/frame_hashes` (POST with anon key)
+- **Required headers**: `apikey: {AnonKey}`, `Authorization: Bearer {AnonKey}`, `Content-Type: application/json`
+- **RLS**: Allows INSERT for anon/authenticated, SELECT only for service_role
+
+### Supabase Retention (manual or scheduled)
+- **Function signature**: `public.cleanup_expired_sessions(retention_hours INTEGER) RETURNS INTEGER`
+- **Behavior**: Deletes sessions WHERE `created_at < NOW() - retention_hours`, cascades to frame_hashes
+- **Execution**: Requires service_role or explicit GRANT EXECUTE permission
+
+## Repo Reality Snapshot
+
+### Slice 4A (Validator API - Supabase Integration)
 - `services/validator-api/Services/SupabaseHashStore.cs`: real PostgREST HTTP implementation of `ISupabaseHashStore`.
 - `services/validator-api/Services/SupabaseOptions.cs`: config for Supabase BaseUrl/ServiceRoleKey/Schema/TimeoutSeconds.
 - `services/validator-api/Services/SupabaseServiceCollectionExtensions.cs`: DI helper to register options + typed HttpClient.
 - `services/validator-api/Tests/SupabaseHashStoreTests.cs`: unit tests with mocked HttpMessageHandler for URL/header/mapping/error cases.
 - `services/validator-api/appsettings.json`: Supabase config placeholders.
+
+### Slice 4B (Supabase Schema + RLS + Retention)
+- `supabase/migrations/0001_init_capture_sessions_and_frame_hashes.sql`: Creates tables, indexes, constraints, comments.
+- `supabase/migrations/0002_rls_policies.sql`: Enables RLS, creates INSERT policies (anon) and SELECT policies (service_role).
+- `supabase/functions/retention_cleanup.sql`: Creates `cleanup_expired_sessions(retention_hours)` function with cascade delete.
+- `docs/supabase-setup.md`: Comprehensive setup guide with SQL apply order, secrets safety, testing steps.
+- `docs/slice4b-log.md`: Documentation of Slice 4B completion, apply checklist, security evidence.
+- `docs/flow/current-system-flow.puml`: PlantUML diagram showing capture flow, verification flow, retention cleanup.
+- `.gitignore`: Enforces secrets safety (`.env.local`, `appsettings.Development.json`).
 
 ## Evidence
 

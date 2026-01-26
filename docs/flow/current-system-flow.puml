@@ -1,0 +1,32 @@
+@startuml
+skinparam shadowing false
+skinparam componentStyle rectangle
+
+actor "Validator Portal" as Portal
+component "Validator API\nClaimsController" as Api
+component "VerificationService" as Verify
+component "ISupabaseHashStore\n(SupabaseHashStore)" <<REAL>> as Store
+component "IVideoFrameExtractor" <<MOCK>> as Extractor
+component "HashMatcher" as Matcher
+
+Portal --> Api : POST /api/claims/verify\n(multipart: video, metadata)
+Api --> Verify : VerifyAsync(videoStream, metadata)
+Verify --> Store : GetSessionAsync(sessionId)
+Verify --> Store : GetFrameHashesAsync(sessionId)
+Verify --> Extractor : ExtractFramesAsync(videoStream, intervalMs)
+Verify --> Matcher : Match(reference, candidates, intervalMs)
+Matcher --> Verify : matched + stats
+Verify --> Api : VerificationResult
+Api --> Portal : 200 OK + result
+
+note right of Store
+Slice 4A completed:
+SupabaseHashStore is REAL
+(PostgREST HTTP)
+end note
+
+note right of Extractor
+Mocked until Slice 4C
+(ffmpeg extraction)
+end note
+@enduml

@@ -1,9 +1,13 @@
 # ProjectState
 
 ## Slice Status
-- Current slice: Slice 3 ✅
+- Current slice: Slice 4A ✅
 - Last commit: 4c9d99d Add claim verification API and core verification logic
-- Next planned slice: Slice 4 (ffmpeg extraction + real Supabase + portal wiring + retention)
+- Next planned slice: Slice 4 (ffmpeg extraction + portal wiring + retention)
+- Slice 4A (DONE ✅):
+  - SupabaseHashStore real HTTP client via PostgREST
+  - SupabaseOptions config keys + DI wiring helper
+  - Unit tests with mocked HttpMessageHandler
 
 ## Repo Tree (Relevant)
 ```text
@@ -30,6 +34,7 @@ F:.
 |               `-- uploader.spec.ts
 |-- docs
 |   |-- planV1.md
+|   |-- planV2.md
 |   |-- slice1-log.md
 |   |-- slice2-log.md
 |   |-- slice3-log.md
@@ -37,6 +42,7 @@ F:.
 |-- services
 |   `-- validator-api
 |       |-- validator-api.csproj
+|       |-- appsettings.json
 |       |-- Controllers
 |       |   `-- ClaimsController.cs
 |       |-- Models
@@ -50,10 +56,14 @@ F:.
 |       |   |-- ISupabaseHashStore.cs
 |       |   |-- IVideoFrameExtractor.cs
 |       |   |-- ServiceExceptions.cs
+|       |   |-- SupabaseHashStore.cs
+|       |   |-- SupabaseOptions.cs
+|       |   |-- SupabaseServiceCollectionExtensions.cs
 |       |   `-- VerificationService.cs
 |       `-- Tests
 |           |-- DHash64Tests.cs
 |           |-- HashMatcherTests.cs
+|           |-- SupabaseHashStoreTests.cs
 |           |-- VerificationServiceTests.cs
 |           `-- validator-api.Tests.csproj
 `-- ... (omitted)
@@ -331,6 +341,21 @@ cd services/validator-api
 dotnet test
 ```
 
+## Contracts that MUST remain stable
+
+### Supabase PostgREST reads (validator-api)
+- capture_sessions: `GET {BaseUrl}/rest/v1/capture_sessions?session_id=eq.{sessionId}&select=*`
+- frame_hashes: `GET {BaseUrl}/rest/v1/frame_hashes?session_id=eq.{sessionId}&select=*&order=elapsed_ms.asc`
+- Required headers: `apikey: {ServiceRoleKey}`, `Authorization: Bearer {ServiceRoleKey}`, `Accept: application/json`
+- Ordering constraint: `elapsed_ms asc` for frame hashes
+
+## Repo Reality Snapshot (Slice 4A)
+- `services/validator-api/Services/SupabaseHashStore.cs`: real PostgREST HTTP implementation of `ISupabaseHashStore`.
+- `services/validator-api/Services/SupabaseOptions.cs`: config for Supabase BaseUrl/ServiceRoleKey/Schema/TimeoutSeconds.
+- `services/validator-api/Services/SupabaseServiceCollectionExtensions.cs`: DI helper to register options + typed HttpClient.
+- `services/validator-api/Tests/SupabaseHashStoreTests.cs`: unit tests with mocked HttpMessageHandler for URL/header/mapping/error cases.
+- `services/validator-api/appsettings.json`: Supabase config placeholders.
+
 ## Evidence
 
 ```text
@@ -343,5 +368,5 @@ Passed!  - Failed:     0, Passed:    10, Skipped:     0, Total:    10, Duration:
 ## Notes / Assumptions
 
 * Multipart part names are `video` and `metadata`; metadata JSON parsing is case-insensitive.
-* Supabase reads and ffmpeg extraction remain abstracted (mocked) in Slice 3.
+* Supabase reads are REAL (PostgREST) as of Slice 4A; ffmpeg extraction remains mocked until later in Slice 4.
 * `docs/slice3-log.md` is documentation-only (clarifies non-canonical service test fixtures).

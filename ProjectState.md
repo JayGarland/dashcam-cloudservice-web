@@ -1,9 +1,9 @@
 # ProjectState
 
 ## Slice Status
-- Current slice: Slice 4B ✅ DONE
+- Current slice: Slice 4C ✅ DONE
 - Last commit: 4c9d99d Add claim verification API and core verification logic
-- Next planned slice: Slice 4C (ffmpeg extraction + portal wiring)
+- Next planned slice: Slice 4D (portal wiring)
 - Slice 4A (DONE ✅):
   - SupabaseHashStore real HTTP client via PostgREST
   - SupabaseOptions config keys + DI wiring helper
@@ -15,9 +15,16 @@
   - Documentation hardening: secrets safety, SQL apply order, RLS model
   - PlantUML diagram updated with database layer
   - NO secrets committed (gitignore enforced, verified)
+- Slice 4C (DONE ✅):
+  - FfmpegVideoFrameExtractor one-run ffmpeg extraction
+  - showinfo pts_time parsing -> elapsedMs mapping
+  - PNG decode to RGBA with ImageSharp (no System.Drawing)
+  - IProcessRunner abstraction + ProcessRunner implementation
+  - Unit tests with mocked process runner and real parsing/PNG decode
 
 **See [docs/supabase-setup.md](docs/supabase-setup.md) for step-by-step setup instructions.**
 **See [docs/slice4b-log.md](docs/slice4b-log.md) for Slice 4B completion details.**
+**See [docs/slice4c-log.md](docs/slice4c-log.md) for Slice 4C completion details.**
 
 ## Repo Tree (Relevant)
 ```text
@@ -51,6 +58,7 @@ F:.
 |   |-- slice2-log.md
 |   |-- slice3-log.md
 |   |-- slice4b-log.md
+|   |-- slice4c-log.md
 |   |-- specV0.md
 |   |-- supabase-setup.md
 |   `-- flow
@@ -69,10 +77,14 @@ F:.
 |       |   `-- VerifyClaimModels.cs
 |       |-- Services
 |       |   |-- DHash64.cs
+|       |   |-- FfmpegOptions.cs
+|       |   |-- FfmpegVideoFrameExtractor.cs
 |       |   |-- HammingDistance.cs
 |       |   |-- HashMatcher.cs
+|       |   |-- IProcessRunner.cs
 |       |   |-- ISupabaseHashStore.cs
 |       |   |-- IVideoFrameExtractor.cs
+|       |   |-- ProcessRunner.cs
 |       |   |-- ServiceExceptions.cs
 |       |   |-- SupabaseHashStore.cs
 |       |   |-- SupabaseOptions.cs
@@ -80,6 +92,7 @@ F:.
 |       |   `-- VerificationService.cs
 |       `-- Tests
 |           |-- DHash64Tests.cs
+|           |-- FfmpegVideoFrameExtractorTests.cs
 |           |-- HashMatcherTests.cs
 |           |-- SupabaseHashStoreTests.cs
 |           |-- VerificationServiceTests.cs
@@ -93,7 +106,7 @@ F:.
 `-- .gitignore (enforces secrets safety)
 ```
 
-## Core Interfaces (Slice 1–3)
+## Core Interfaces (Slice 1–4C)
 
 ### TypeScript
 
@@ -241,6 +254,15 @@ public interface ISupabaseHashStore
     Task<IReadOnlyList<FrameHashRecord>> GetFrameHashesAsync(string sessionId, CancellationToken ct);
 }
 
+public sealed record ProcessRunRequest(string FileName, string Arguments, string? WorkingDirectory = null);
+
+public sealed record ProcessRunResult(int ExitCode, string StdOut, string StdErr);
+
+public interface IProcessRunner
+{
+    Task<ProcessRunResult> RunAsync(ProcessRunRequest request, CancellationToken ct);
+}
+
 public class HashMatcher
 {
     public HashMatcher(int threshold = 5, int toleranceMs = 200);
@@ -384,6 +406,11 @@ dotnet test
 - **Behavior**: Deletes sessions WHERE `created_at < NOW() - retention_hours`, cascades to frame_hashes
 - **Execution**: Requires service_role or explicit GRANT EXECUTE permission
 
+### ffmpeg Extraction (validator-api reads)
+- **One-run rule**: One ffmpeg process per verification; no per-frame spawning.
+- **Args formation**: fps = 1000.0 / intervalMs; output pattern `frame_%06d.png`; filter includes `showinfo`.
+- **Mapping rule**: pts_time order maps to output frame order.
+
 ## Repo Reality Snapshot
 
 ### Slice 4A (Validator API - Supabase Integration)
@@ -402,17 +429,22 @@ dotnet test
 - `docs/flow/current-system-flow.puml`: PlantUML diagram showing capture flow, verification flow, retention cleanup.
 - `.gitignore`: Enforces secrets safety (`.env.local`, `appsettings.Development.json`).
 
+### Slice 4C (ffmpeg Extraction)
+- `services/validator-api/Services/FfmpegVideoFrameExtractor.cs`: one-run ffmpeg extraction, showinfo parsing, PNG->RGBA via ImageSharp.
+- `services/validator-api/Services/FfmpegOptions.cs`: config for ffmpeg path (`Ffmpeg:Path`).
+- `services/validator-api/Services/IProcessRunner.cs`: process execution abstraction (mockable).
+- `services/validator-api/Services/ProcessRunner.cs`: real process runner using System.Diagnostics.Process.
+- `services/validator-api/Tests/FfmpegVideoFrameExtractorTests.cs`: deterministic tests for args, parsing, decode, ordering, and failures.
+- `services/validator-api/appsettings.json`: ffmpeg path placeholder.
+
 ## Evidence
 
 ```text
-Test Files 4 passed (4)
-Tests 10 passed (10)
-Duration 870ms (transform 155ms, setup 0ms, collect 550ms, tests 36ms, environment 1ms, prepare 1.10s)
-Passed!  - Failed:     0, Passed:    10, Skipped:     0, Total:    10, Duration: 27 ms - validator-api.Tests.dll (net8.0)
+Passed!  - Failed:     0, Passed:    20, Skipped:     0, Total:    20, Duration: 331 ms - validator-api.Tests.dll (net8.0)
 ```
 
 ## Notes / Assumptions
 
 * Multipart part names are `video` and `metadata`; metadata JSON parsing is case-insensitive.
-* Supabase reads are REAL (PostgREST) as of Slice 4A; ffmpeg extraction remains mocked until later in Slice 4.
+* Supabase reads are REAL (PostgREST) as of Slice 4A; ffmpeg extraction is REAL as of Slice 4C.
 * `docs/slice3-log.md` is documentation-only (clarifies non-canonical service test fixtures).

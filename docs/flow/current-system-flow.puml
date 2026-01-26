@@ -9,7 +9,7 @@ title Dashcam Cloud Service - Current System Flow (Slice 4C)
 ' ============================================================================
 
 actor "Dashcam Device\n(Browser)" as Client
-actor "Validator Portal\n(Future UI)" as Portal
+actor "Validator Portal\n(Future UI)" <<PENDING>> as Portal
 
 component "Capture Client\n(TypeScript)" as CaptureApp {
   component "Sampler" as Sampler
@@ -25,6 +25,9 @@ component "Validator API\n(.NET/C#)" as ValidatorApp {
   component "IVideoFrameExtractor\n(FfmpegVideoFrameExtractor)" <<REAL>> as Extractor
   component "HashMatcher" as Matcher
 }
+
+component "ffmpeg CLI" <<REAL>> as Ffmpeg
+component "ImageSharp\n(PNG->RGBA)" <<REAL>> as ImageSharp
 
 database "Supabase PostgreSQL" as DB {
   component "capture_sessions\n+ RLS policies" <<REAL>> as SessionsTable
@@ -60,6 +63,8 @@ Store --> SessionsTable : GET /rest/v1/capture_sessions?session_id=eq.{id}\n(ser
 Verify --> Store : GetFrameHashesAsync(sessionId)
 Store --> HashesTable : GET /rest/v1/frame_hashes?session_id=eq.{id}\n&order=elapsed_ms.asc\n(service_role key, bypasses RLS)
 Verify --> Extractor : ExtractFramesAsync(videoStream, intervalMs)
+Extractor --> Ffmpeg : decode + fps + showinfo\n(single run)
+Extractor --> ImageSharp : decode PNG frames
 Verify --> Matcher : Match(reference, candidates, intervalMs)
 Matcher --> Verify : matched + stats
 Verify --> Controller : VerificationResult
@@ -74,6 +79,10 @@ end note
 note right of Extractor
 Slice 4C: ffmpeg extraction REAL
 Single-run + showinfo pts_time
+end note
+
+note right of Portal
+Slice 4D: Portal wiring pending
 end note
 
 ' ============================================================================

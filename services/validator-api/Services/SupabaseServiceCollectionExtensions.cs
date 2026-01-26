@@ -22,4 +22,14 @@ public static class SupabaseServiceCollectionExtensions
         });
         return services;
     }
+
+    public static IServiceCollection AddFfmpegFrameExtractor(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        services.Configure<FfmpegOptions>(configuration.GetSection("Ffmpeg"));
+        services.AddSingleton<IProcessRunner, ProcessRunner>();
+        services.AddSingleton<IVideoFrameExtractor, FfmpegVideoFrameExtractor>();
+        return services;
+    }
 }

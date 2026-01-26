@@ -2,7 +2,7 @@
 skinparam shadowing false
 skinparam componentStyle rectangle
 
-title Dashcam Cloud Service - Current System Flow (Slice 4B)
+title Dashcam Cloud Service - Current System Flow (Slice 4C)
 
 ' ============================================================================
 ' Actors and Components
@@ -22,7 +22,7 @@ component "Validator API\n(.NET/C#)" as ValidatorApp {
   component "ClaimsController" as Controller
   component "VerificationService" as Verify
   component "ISupabaseHashStore\n(SupabaseHashStore)" <<REAL>> as Store
-  component "IVideoFrameExtractor" <<MOCK>> as Extractor
+  component "IVideoFrameExtractor\n(FfmpegVideoFrameExtractor)" <<REAL>> as Extractor
   component "HashMatcher" as Matcher
 }
 
@@ -72,8 +72,8 @@ service_role key = full access
 end note
 
 note right of Extractor
-Mocked until Slice 4C
-(ffmpeg extraction pending)
+Slice 4C: ffmpeg extraction REAL
+Single-run + showinfo pts_time
 end note
 
 ' ============================================================================
@@ -100,7 +100,7 @@ legend right
   | SupabaseHashStore | <<REAL>> | 4A |
   | Supabase Schema/RLS | <<REAL>> | 4B |
   | Retention Cleanup | <<REAL>> | 4B |
-  | IVideoFrameExtractor | <<MOCK>> | 4C (pending) |
+  | IVideoFrameExtractor | <<REAL>> | 4C |
   | Validator Portal UI | Not Started | 4D (pending) |
 endlegend
 

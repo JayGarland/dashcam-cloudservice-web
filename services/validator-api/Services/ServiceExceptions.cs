@@ -19,6 +19,20 @@ public class SessionExpiredException : Exception
     }
 }
 
+public class FfmpegException : Exception
+{
+    public FfmpegException(string message, int exitCode, string stderr)
+        : base(message)
+    {
+        ExitCode = exitCode;
+        Stderr = stderr ?? string.Empty;
+    }
+
+    public int ExitCode { get; }
+
+    public string Stderr { get; }
+}
+
 public class SupabaseRequestException : Exception
 {
     public SupabaseRequestException(string message, int statusCode)

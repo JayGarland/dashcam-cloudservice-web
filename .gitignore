@@ -39,4 +39,11 @@ Desktop.ini
 .env
 .env.local
 .env.*.local
+
+# Development secrets (NEVER commit)
+appsettings.Development.json
+appsettings.*.Development.json
+**/secrets.*
+**/*.secret.*
+
 /export

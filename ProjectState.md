@@ -8,6 +8,14 @@
   - SupabaseHashStore real HTTP client via PostgREST
   - SupabaseOptions config keys + DI wiring helper
   - Unit tests with mocked HttpMessageHandler
+- Slice 4 supabase setup (DONE ✅):
+  - Supabase setup documentation + SQL migrations
+  - Schema: capture_sessions + frame_hashes tables
+  - RLS policies for secure client/server access
+  - Retention cleanup function
+  - Configuration scaffolding (no secrets committed)
+
+**See [docs/supabase-setup.md](docs/supabase-setup.md) for step-by-step instructions.**
 
 ## Repo Tree (Relevant)
 ```text

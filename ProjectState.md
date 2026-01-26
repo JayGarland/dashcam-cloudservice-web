@@ -1,9 +1,9 @@
 # ProjectState
 
 ## Slice Status
-- Current slice: Slice 4C ✅ DONE
+- Current slice: Slice 4D ✅ DONE
 - Last commit: 4c9d99d Add claim verification API and core verification logic
-- Next planned slice: Slice 4D (portal wiring)
+- Next planned slice: Slice 4E (end-to-end demo + regression gate)
 - Slice 4A (DONE ✅):
   - SupabaseHashStore real HTTP client via PostgREST
   - SupabaseOptions config keys + DI wiring helper
@@ -21,10 +21,16 @@
   - PNG decode to RGBA with ImageSharp (no System.Drawing)
   - IProcessRunner abstraction + ProcessRunner implementation
   - Unit tests with mocked process runner and real parsing/PNG decode
+- Slice 4D (DONE ✅):
+  - Angular Validator Portal with Verify Claim screen
+  - Multipart upload to POST /api/claims/verify (Video + Metadata parts)
+  - Result rendering (verdict, metrics, missing spans, notes)
+  - Dev proxy configuration for local CORS avoidance
 
 **See [docs/supabase-setup.md](docs/supabase-setup.md) for step-by-step setup instructions.**
 **See [docs/slice4b-log.md](docs/slice4b-log.md) for Slice 4B completion details.**
 **See [docs/slice4c-log.md](docs/slice4c-log.md) for Slice 4C completion details.**
+**See [docs/slice4d-log.md](docs/slice4d-log.md) for Slice 4D completion details.**
 
 ## Repo Tree (Relevant)
 ```text
@@ -51,6 +57,36 @@ F:.
 |               |-- hashQueue.spec.ts
 |               |-- sampler.spec.ts
 |               `-- uploader.spec.ts
+|   `-- validator-portal
+|       |-- angular.json
+|       |-- package.json
+|       |-- proxy.conf.json
+|       |-- tsconfig.json
+|       |-- tsconfig.app.json
+|       |-- tsconfig.spec.json
+|       `-- src
+|           |-- index.html
+|           |-- main.ts
+|           |-- styles.css
+|           |-- environments
+|           |   |-- environment.ts
+|           |   `-- environment.development.ts
+|           `-- app
+|               |-- app.component.html
+|               |-- app.component.ts
+|               |-- app.component.css
+|               |-- app.module.ts
+|               |-- app-routing.module.ts
+|               |-- api
+|               |   `-- validator-api.service.ts
+|               |-- models
+|               |   `-- verification.models.ts
+|               `-- claims
+|                   `-- verify-claim
+|                       |-- verify-claim.component.html
+|                       |-- verify-claim.component.ts
+|                       |-- verify-claim.component.css
+|                       `-- verify-claim.module.ts
 |-- docs
 |   |-- planV1.md
 |   |-- planV2.md
@@ -59,6 +95,7 @@ F:.
 |   |-- slice3-log.md
 |   |-- slice4b-log.md
 |   |-- slice4c-log.md
+|   |-- slice4d-log.md
 |   |-- specV0.md
 |   |-- supabase-setup.md
 |   `-- flow
@@ -106,7 +143,7 @@ F:.
 `-- .gitignore (enforces secrets safety)
 ```
 
-## Core Interfaces (Slice 1–4C)
+## Core Interfaces (Slice 1–4D)
 
 ### TypeScript
 
@@ -385,9 +422,25 @@ npm test
 
 cd services/validator-api
 dotnet test
+
+cd apps/validator-portal
+npm install
+npm run build
+npm test
 ```
 
+## Manual Demo Checklist (Slice 4D)
+1) Start validator-api (`cd services/validator-api` then `dotnet run`)
+2) Start validator-portal (`cd apps/validator-portal` then `npm start`)
+3) Upload a video file and the corresponding `metadata.json`
+4) Confirm VerificationResult renders (verdict, metrics, missing spans, notes)
+
 ## Contracts that MUST remain stable
+
+### Validator API Multipart Contract (Portal -> API)
+- **Endpoint**: `POST /api/claims/verify`
+- **Multipart part names**: `Video`, `Metadata` (portal sends exact casing)
+- **Response fields used by portal**: `verdict`, `sessionId`, `threshold`, `toleranceMs`, `intervalMs`, `expectedSamples`, `matchedSamples`, `matchRatio`, `avgDistance`, `maxDistance`, `missingSpans`, `notes`
 
 ### Supabase PostgREST API (validator-api reads)
 - **capture_sessions GET**: `{BaseUrl}/rest/v1/capture_sessions?session_id=eq.{sessionId}&select=*`
@@ -437,6 +490,13 @@ dotnet test
 - `services/validator-api/Tests/FfmpegVideoFrameExtractorTests.cs`: deterministic tests for args, parsing, decode, ordering, and failures.
 - `services/validator-api/appsettings.json`: ffmpeg path placeholder.
 
+### Slice 4D (Validator Portal Wiring)
+- `apps/validator-portal/src/app/api/validator-api.service.ts`: builds multipart FormData and calls `/api/claims/verify`.
+- `apps/validator-portal/src/app/claims/verify-claim/*`: Verify Claim screen (upload + render verdict/metrics/missing spans/notes).
+- `apps/validator-portal/src/app/models/verification.models.ts`: portal-side VerificationResult types.
+- `apps/validator-portal/src/environments/environment*.ts`: validator API base URL config.
+- `apps/validator-portal/proxy.conf.json`: dev proxy for local CORS avoidance.
+
 ## Evidence
 
 ```text
@@ -445,6 +505,6 @@ Passed!  - Failed:     0, Passed:    20, Skipped:     0, Total:    20, Duration:
 
 ## Notes / Assumptions
 
-* Multipart part names are `video` and `metadata`; metadata JSON parsing is case-insensitive.
+* Multipart part names are `Video` and `Metadata` (case-sensitive in portal; server binding is case-insensitive).
 * Supabase reads are REAL (PostgREST) as of Slice 4A; ffmpeg extraction is REAL as of Slice 4C.
 * `docs/slice3-log.md` is documentation-only (clarifies non-canonical service test fixtures).

@@ -53,3 +53,7 @@ If you hit CORS errors in the browser console, set the base URL to empty and rel
 - Multipart field names must be `Video` and `Metadata` (matching `VerifyClaimRequest` property names).
 - No secrets or auth tokens are committed; token forwarding is optional via DI.
 - Hashing, matching, ffmpeg extraction, and Supabase store logic remain unchanged.
+
+## Screenshots (placeholders)
+- TODO: Verify Claim screen with selected files
+- TODO: VerificationResult rendering (verdict + metrics + missing spans)

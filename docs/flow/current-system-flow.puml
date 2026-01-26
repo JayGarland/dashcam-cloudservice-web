@@ -52,6 +52,10 @@ RLS allows INSERT only
 Cannot SELECT other users' data
 end note
 
+note right of CaptureApp
+Offline buffering / streaming enhancements <<PENDING>>
+end note
+
 ' ============================================================================
 ' Verification Flow (Read Path)
 ' ============================================================================
@@ -83,6 +87,14 @@ end note
 
 note right of Portal
 Slice 4D: Portal wiring REAL
+end note
+
+note right of Portal
+Auth enforcement (portal) <<PENDING>>
+end note
+
+note right of ValidatorApp
+Auth enforcement (API) <<PENDING>>
 end note
 
 ' ============================================================================

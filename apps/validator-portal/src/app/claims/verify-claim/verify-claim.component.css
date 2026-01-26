@@ -1,0 +1,152 @@
+﻿.intro {
+  margin-top: 0;
+  color: var(--ink-muted);
+}
+
+.form {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.5rem;
+}
+
+label {
+  font-weight: 600;
+}
+
+input[type="file"] {
+  padding: 0.75rem;
+  border-radius: 12px;
+  border: 1px dashed var(--border);
+  background: #fff;
+}
+
+.hint {
+  color: var(--ink-muted);
+  font-size: 0.9rem;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+button {
+  border: none;
+  border-radius: 999px;
+  padding: 0.75rem 1.6rem;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: var(--accent-strong);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  background: #d9c4b6;
+}
+
+.status {
+  color: var(--ink-muted);
+  font-size: 0.95rem;
+}
+
+.error {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(176, 58, 46, 0.35);
+  background: rgba(176, 58, 46, 0.1);
+  color: var(--error);
+}
+
+.result {
+  margin-top: 2rem;
+}
+
+.result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.session {
+  text-align: right;
+}
+
+.session .label {
+  font-size: 0.85rem;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.metric {
+  padding: 0.85rem;
+  border-radius: 14px;
+  background: #fff8f1;
+  border: 1px solid var(--border);
+}
+
+.metric .label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-muted);
+}
+
+.metric .value {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1.5rem;
+}
+
+.details h3 {
+  margin-top: 0;
+  font-size: 1.1rem;
+}
+
+.details ul {
+  padding-left: 1.2rem;
+  margin: 0.5rem 0 0;
+}
+
+.muted {
+  color: var(--ink-muted);
+}
+
+@media (max-width: 720px) {
+  .result-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .session {
+    text-align: left;
+  }
+}

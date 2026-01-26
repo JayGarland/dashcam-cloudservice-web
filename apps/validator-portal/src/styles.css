@@ -1,0 +1,100 @@
+﻿@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Libre+Baskerville:wght@400;700&family=Space+Grotesk:wght@400;600;700&display=swap');
+
+:root {
+  color-scheme: light;
+  --bg: #f7f4ef;
+  --ink: #1b1a17;
+  --ink-muted: #4f4a43;
+  --accent: #c4632f;
+  --accent-strong: #a24b1f;
+  --panel: #ffffff;
+  --border: #dfd8cf;
+  --success: #2f7a3e;
+  --warning: #b98a00;
+  --error: #b03a2e;
+  --shadow: 0 12px 24px rgba(27, 26, 23, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Libre Baskerville", "Georgia", serif;
+  color: var(--ink);
+  background: radial-gradient(circle at top, #fff8ee 0%, var(--bg) 55%);
+}
+
+h1,
+h2,
+h3 {
+  font-family: "Space Grotesk", "Trebuchet MS", sans-serif;
+  letter-spacing: 0.02em;
+  margin: 0 0 0.5rem;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem 4rem;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  padding: 1.5rem;
+}
+
+.section-title {
+  font-size: 1.4rem;
+  margin-bottom: 1rem;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.badge.verified {
+  background: rgba(47, 122, 62, 0.15);
+  color: var(--success);
+}
+
+.badge.suspicious {
+  background: rgba(176, 58, 46, 0.15);
+  color: var(--error);
+}
+
+.badge.inconclusive {
+  background: rgba(185, 138, 0, 0.15);
+  color: var(--warning);
+}
+
+.mono {
+  font-family: "JetBrains Mono", "Consolas", monospace;
+}
+
+@media (max-width: 680px) {
+  main {
+    padding: 2rem 1.25rem 3rem;
+  }
+}

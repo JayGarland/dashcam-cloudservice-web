@@ -2,14 +2,14 @@
 skinparam shadowing false
 skinparam componentStyle rectangle
 
-title Dashcam Cloud Service - Current System Flow (Slice 4C)
+title Dashcam Cloud Service - Current System Flow (Slice 4D)
 
 ' ============================================================================
 ' Actors and Components
 ' ============================================================================
 
 actor "Dashcam Device\n(Browser)" as Client
-actor "Validator Portal\n(Future UI)" <<PENDING>> as Portal
+actor "Validator Portal\n(Angular UI)" <<REAL>> as Portal
 
 component "Capture Client\n(TypeScript)" as CaptureApp {
   component "Sampler" as Sampler
@@ -56,7 +56,7 @@ end note
 ' Verification Flow (Read Path)
 ' ============================================================================
 
-Portal --> Controller : POST /api/claims/verify\n(multipart: video, metadata)
+Portal --> Controller : POST /api/claims/verify\n(multipart: Video, Metadata)
 Controller --> Verify : VerifyAsync(videoStream, metadata)
 Verify --> Store : GetSessionAsync(sessionId)
 Store --> SessionsTable : GET /rest/v1/capture_sessions?session_id=eq.{id}\n(service_role key, bypasses RLS)
@@ -82,7 +82,7 @@ Single-run + showinfo pts_time
 end note
 
 note right of Portal
-Slice 4D: Portal wiring pending
+Slice 4D: Portal wiring REAL
 end note
 
 ' ============================================================================
@@ -110,7 +110,7 @@ legend right
   | Supabase Schema/RLS | <<REAL>> | 4B |
   | Retention Cleanup | <<REAL>> | 4B |
   | IVideoFrameExtractor | <<REAL>> | 4C |
-  | Validator Portal UI | Not Started | 4D (pending) |
+  | Validator Portal UI | <<REAL>> | 4D |
 endlegend
 
 @enduml

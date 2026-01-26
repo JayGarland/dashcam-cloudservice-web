@@ -1,0 +1,100 @@
+﻿<section class="panel">
+  <h2 class="section-title">Verify Claim</h2>
+  <p class="intro">
+    Select the captured video and the metadata JSON exported by the capture client.
+  </p>
+
+  <form class="form" (submit)="submit(); $event.preventDefault();">
+    <div class="field">
+      <label for="video">Video file</label>
+      <input
+        id="video"
+        type="file"
+        accept=".avi,video/*"
+        (change)="onVideoSelected($event)"
+      />
+      <span class="hint" *ngIf="videoFile">Selected: {{ videoFile.name }}</span>
+    </div>
+
+    <div class="field">
+      <label for="metadata">Metadata JSON</label>
+      <input
+        id="metadata"
+        type="file"
+        accept=".json,application/json"
+        (change)="onMetadataSelected($event)"
+      />
+      <span class="hint" *ngIf="metadataFile">Selected: {{ metadataFile.name }}</span>
+    </div>
+
+    <div class="actions">
+      <button type="submit" [disabled]="isLoading || !videoFile || !metadataFile">
+        {{ isLoading ? 'Verifying...' : 'Verify Claim' }}
+      </button>
+      <span class="status" *ngIf="isLoading">Uploading + matching frames...</span>
+    </div>
+  </form>
+
+  <div class="error" *ngIf="errorMessage">
+    {{ errorMessage }}
+  </div>
+</section>
+
+<section class="panel result" *ngIf="result">
+  <div class="result-header">
+    <div>
+      <h2 class="section-title">Verification Result</h2>
+      <div class="badge" [ngClass]="verdictClass">{{ result.verdict }}</div>
+    </div>
+    <div class="session">
+      <div class="label">Session ID</div>
+      <div class="mono">{{ result.sessionId }}</div>
+    </div>
+  </div>
+
+  <div class="metrics">
+    <div class="metric">
+      <div class="label">Match ratio</div>
+      <div class="value">{{ result.matchRatio | number : '1.2-2' }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">Matched samples</div>
+      <div class="value">
+        {{ result.matchedSamples }} / {{ result.expectedSamples }}
+      </div>
+    </div>
+    <div class="metric">
+      <div class="label">Avg distance</div>
+      <div class="value">{{ result.avgDistance | number : '1.2-2' }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">Max distance</div>
+      <div class="value">{{ result.maxDistance }}</div>
+    </div>
+  </div>
+
+  <div class="details">
+    <div>
+      <h3>Missing spans</h3>
+      <ul *ngIf="result.missingSpans?.length; else noMissing">
+        <li *ngFor="let span of result.missingSpans">
+          {{ span.startElapsedMs }}ms - {{ span.endElapsedMs }}ms
+          <span class="muted">({{ span.reason }})</span>
+        </li>
+      </ul>
+      <ng-template #noMissing>
+        <p class="muted">No missing spans reported.</p>
+      </ng-template>
+    </div>
+
+    <div>
+      <h3>Notes</h3>
+      <ul *ngIf="result.notes?.length; else noNotes">
+        <li *ngFor="let note of result.notes">{{ note }}</li>
+      </ul>
+      <ng-template #noNotes>
+        <p class="muted">No notes from the verifier.</p>
+      </ng-template>
+    </div>
+  </div>
+</section>

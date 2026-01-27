@@ -5,166 +5,152 @@
 - Pending slices: 5C, 5D
 
 ## Repo Structure (Focused Snapshot)
-(Tree command unavailable; snapshot derived from `rg --files`.)
+(Tree command unavailable; snapshot derived from `find` with exclusions.)
 
 ### apps/capture-client/src
 ```text
 apps/capture-client/src
-|-- constants.ts
-|-- models.ts
-|-- capture
-|   |-- frameSource.ts
-|   `-- sampler.ts
-|-- hash
-|   `-- dhash64.ts
-|-- storage
-|   `-- hashQueue.ts
-|-- supabase
-|   |-- supabaseApi.ts
-|   `-- uploader.ts
-|-- ui
-|   |-- capturePage.ts
-|   `-- main.ts
-`-- __tests__
-    |-- dhash64.spec.ts
-    |-- hashQueue.spec.ts
-    |-- sampler.spec.ts
-    `-- uploader.spec.ts
+__tests__
+    dhash64.spec.ts
+    hashQueue.spec.ts
+    sampler.spec.ts
+    uploader.spec.ts
+capture
+    frameSource.ts
+    sampler.ts
+constants.ts
+hash
+    dhash64.ts
+models.ts
+storage
+    hashQueue.ts
+supabase
+    supabaseApi.ts
+    uploader.ts
+ui
+    capturePage.ts
+    main.ts
 ```
 
-### services/validator-api (top-level + Services + Models + Tests)
-```text
-services/validator-api
-|-- Program.cs
-|-- validator-api.csproj
-|-- appsettings.json
-|-- appsettings.Development.example.json
-|-- Auth
-|   |-- SupabaseJwtValidator.cs
-|   `-- ValidatorRoleRequirement.cs
-|-- Controllers
-|   `-- ClaimsController.cs
-|-- Models
-|   |-- CaptureModels.cs
-|   |-- VerificationModels.cs
-|   `-- VerifyClaimModels.cs
-|-- Services
-|   |-- DHash64.cs
-|   |-- FfmpegOptions.cs
-|   |-- FfmpegVideoFrameExtractor.cs
-|   |-- HammingDistance.cs
-|   |-- HashMatcher.cs
-|   |-- IProcessRunner.cs
-|   |-- ISupabaseHashStore.cs
-|   |-- IVideoFrameExtractor.cs
-|   |-- ProcessRunner.cs
-|   |-- ServiceExceptions.cs
-|   |-- SupabaseHashStore.cs
-|   |-- SupabaseOptions.cs
-|   |-- SupabaseServiceCollectionExtensions.cs
-|   `-- VerificationService.cs
-`-- Tests
-    |-- AuthTests.cs
-    |-- DHash64Tests.cs
-    |-- FfmpegVideoFrameExtractorTests.cs
-    |-- HashMatcherTests.cs
-    |-- SupabaseHashStoreTests.cs
-    |-- VerificationServiceTests.cs
-    `-- validator-api.Tests.csproj
-```
-
-### apps/validator-portal/src/app (top-level + claims + api)
+### apps/validator-portal/src/app
 ```text
 apps/validator-portal/src/app
-|-- app-routing.module.ts
-|-- app.component.css
-|-- app.component.html
-|-- app.component.ts
-|-- app.module.ts
-|-- auth
-|   |-- auth.component.css
-|   |-- auth.component.html
-|   |-- auth.component.ts
-|   |-- auth.guard.ts
-|   |-- auth.guard.spec.ts
-|   |-- auth.module.ts
-|   `-- auth.service.ts
-|-- api
-|   |-- validator-api.service.ts
-|   `-- validator-api.service.spec.ts
-|-- claims
-|   `-- verify-claim
-|       |-- verify-claim.component.css
-|       |-- verify-claim.component.html
-|       |-- verify-claim.component.ts
-|       `-- verify-claim.module.ts
-`-- models
-    `-- verification.models.ts
+api
+    validator-api.service.spec.ts
+    validator-api.service.ts
+app-routing.module.ts
+app.component.css
+app.component.html
+app.component.ts
+app.module.ts
+auth
+    auth.component.css
+    auth.component.html
+    auth.component.ts
+    auth.guard.spec.ts
+    auth.guard.ts
+    auth.module.ts
+    auth.service.ts
+claims
+    verify-claim
+        verify-claim.component.css
+        verify-claim.component.html
+        verify-claim.component.ts
+        verify-claim.module.ts
+models
+    verification.models.ts
+```
+
+### services/validator-api
+```text
+services/validator-api
+Auth
+    SupabaseJwtValidator.cs
+    ValidatorRoleRequirement.cs
+Controllers
+    ClaimsController.cs
+Models
+    CaptureModels.cs
+    VerificationModels.cs
+    VerifyClaimModels.cs
+Program.cs
+Services
+    DHash64.cs
+    FfmpegOptions.cs
+    FfmpegVideoFrameExtractor.cs
+    HammingDistance.cs
+    HashMatcher.cs
+    IProcessRunner.cs
+    ISupabaseHashStore.cs
+    IVideoFrameExtractor.cs
+    ProcessRunner.cs
+    ServiceExceptions.cs
+    SupabaseHashStore.cs
+    SupabaseOptions.cs
+    SupabaseServiceCollectionExtensions.cs
+    VerificationService.cs
+Tests
+    AuthTests.cs
+    DHash64Tests.cs
+    FfmpegVideoFrameExtractorTests.cs
+    HashMatcherTests.cs
+    SupabaseHashStoreTests.cs
+    VerificationServiceTests.cs
+    validator-api.Tests.csproj
+appsettings.Development.example.json
+appsettings.Development.json
+appsettings.json
+validator-api.csproj
 ```
 
 ## Key Interfaces (Exact Signatures)
 
 ### Capture Client (TypeScript)
+Auth exports (`apps/capture-client/src/supabase/supabaseApi.ts`):
 ```ts
-export interface FrameData {
-  rgba: Uint8ClampedArray;
-  width: number;
-  height: number;
-}
+export function configureSupabaseAuth(config: SupabaseConfig): void {
+```
+```ts
+export async function signIn(
+  email: string,
+  password: string
+): Promise<Session> {
+```
+```ts
+export async function signOut(): Promise<void> {
+```
+```ts
+export function getSession(): Session | null {
+```
+```ts
+export async function getAccessToken(): Promise<string | undefined> {
+```
 
-export interface FrameSource {
-  readFrame(): Promise<FrameData>;
-}
+Supabase client wrapper (token attachment):
+```ts
+private async post(path: string, payload: unknown): Promise<void> {
+  if (!this.url || !this.anonKey) {
+    return;
+  }
+  const token = (await this.getAccessToken?.()) ?? this.accessToken;
+  if (!token) {
+    throw new Error("Supabase user session is required before uploads.");
+  }
 
-export interface BrowserCameraOptions {
-  videoElement?: HTMLVideoElement;
-  width?: number;
-  height?: number;
-  facingMode?: "user" | "environment";
-  deviceId?: string;
-}
+  const response = await fetch(`${this.url}/rest/v1/${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: this.anonKey,
+      Authorization: `Bearer ${token}`,
+      Prefer: "return=minimal",
+    },
+    body: JSON.stringify(payload),
+  });
+```
 
-export class BrowserCameraFrameSource implements FrameSource {
-  constructor(options: BrowserCameraOptions = {});
-  async start(): Promise<void>;
-  stop(): void;
-  getVideoElement(): HTMLVideoElement;
-  async readFrame(): Promise<FrameData>;
-}
-
-export interface SamplerConfig {
-  samplingIntervalMs: number;
-}
-
-export interface SamplerDeps {
-  frameSource: FrameSource;
-  queue: HashQueue;
-  now: () => number;
-}
-
-export class Sampler {
-  constructor(session: CaptureSession, config: SamplerConfig, deps: SamplerDeps);
-  start(): void;
-  stop(): void;
-}
-
-export interface HashQueue {
-  enqueue(record: FrameHashRecord): Promise<void>;
-  getOldestPending(limit: number): Promise<FrameHashRecord[]>;
-  markUploaded(sessionId: string, sampleIndex: number): Promise<void>;
-  countPending?(sessionId?: string): Promise<number>;
-}
-
-export interface UploaderConfig {
-  batchSize: number;
-}
-
-export class Uploader {
-  constructor(queue: HashQueue, api: SupabaseApi, config?: Partial<UploaderConfig>);
-  uploadPending(): Promise<void>;
-  attachOnlineListener(): void;
-}
-
+Supabase API interfaces (unchanged):
+```ts
 export interface SupabaseApi {
   insertSession(session: CaptureSession): Promise<void>;
   insertFrameHashes(records: FrameHashRecord[]): Promise<void>;
@@ -176,88 +162,165 @@ export interface SupabaseConfig {
   accessToken?: string;
   getAccessToken?: () => Promise<string | undefined>;
 }
+```
 
-export interface CaptureSession {
-  sessionId: string;
-  deviceClockStartEpochMs: number;
-  samplingIntervalMs: number;
-  algoVersion: AlgoVersion;
-  clientVersion?: string;
-}
+### Validator Portal (Angular)
+Auth service (`apps/validator-portal/src/app/auth/auth.service.ts`):
+```ts
+export class AuthService {
+  async signIn(email: string, password: string): Promise<void> {
+  }
 
-export interface FrameHashRecord {
-  sessionId: string;
-  sampleIndex: number;
-  elapsedMs: number;
-  sampleTimestampEpochMs: number;
-  hashHex: string;
-  intervalMs: number;
-  algoVersion: AlgoVersion;
-  createdAtEpochMs: number;
-  uploadState: "pending" | "uploaded";
+  async signOut(): Promise<void> {
+  }
+
+  getAccessTokenSync(): string | null {
+  }
+
+  async getAccessToken(): Promise<string | null> {
+  }
+
+  async isAuthenticated(): Promise<boolean> {
+  }
 }
 ```
 
-### Validator API (C#)
+Auth guard (`apps/validator-portal/src/app/auth/auth.guard.ts`):
+```ts
+export class AuthGuard implements CanActivate {
+  constructor(private auth: AuthService, private router: Router) {}
+
+  async canActivate(): Promise<boolean | UrlTree> {
+    const isAuthed = await this.auth.isAuthenticated();
+    if (isAuthed) {
+      return true;
+    }
+
+    return this.router.createUrlTree(['/login']);
+  }
+}
+```
+
+Access token forwarding (`apps/validator-portal/src/app/api/validator-api.service.ts`):
+```ts
+export type AuthTokenProvider = () => string | null;
+
+export const AUTH_TOKEN_PROVIDER = new InjectionToken<AuthTokenProvider>(
+  'AUTH_TOKEN_PROVIDER'
+);
+```
+```ts
+verifyClaim(
+  videoFile: File,
+  metadataFile: File,
+  accessToken?: string | null
+): Observable<VerificationResult> {
+  const formData = buildVerifyClaimFormData(videoFile, metadataFile);
+  const headers = this.buildAuthHeaders(accessToken);
+  const url = this.buildUrl('/api/claims/verify');
+
+  return this.http.post<VerificationResult>(url, formData, headers ? { headers } : {});
+}
+```
+```ts
+private buildAuthHeaders(overrideToken?: string | null): HttpHeaders | null {
+  const token = overrideToken ?? this.tokenProvider?.();
+  if (!token) {
+    return null;
+  }
+  return new HttpHeaders({ Authorization: `Bearer ${token}` });
+}
+```
+
+Routing protection (`apps/validator-portal/src/app/app-routing.module.ts`):
+```ts
+{
+  path: 'claims/verify',
+  component: VerifyClaimComponent,
+  canActivate: [AuthGuard]
+},
+```
+
+### Validator API (ASP.NET Core)
+Authentication/authorization setup (`services/validator-api/Program.cs`):
 ```csharp
-public interface IVideoFrameExtractor
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = SupabaseJwtValidator.BuildTokenValidationParameters(builder.Configuration);
+    });
+builder.Services.AddAuthorization(options =>
 {
-    Task<IReadOnlyList<ExtractedFrame>> ExtractFramesAsync(
-        Stream videoStream,
-        int intervalMs,
-        CancellationToken ct);
-}
+    options.AddPolicy("ValidatorOnly", policy =>
+    {
+        policy.RequireAuthenticatedUser();
+        policy.AddRequirements(new ValidatorRoleRequirement());
+    });
+});
+builder.Services.AddSingleton<IAuthorizationHandler, ValidatorRoleHandler>();
+```
 
-public interface ISupabaseHashStore
+JWT validation helper (`services/validator-api/Auth/SupabaseJwtValidator.cs`):
+```csharp
+public static class SupabaseJwtValidator
 {
-    Task<CaptureSession?> GetSessionAsync(string sessionId, CancellationToken ct);
-    Task<IReadOnlyList<FrameHashRecord>> GetFrameHashesAsync(string sessionId, CancellationToken ct);
-}
+    public const string JwtSecretConfigKey = "Supabase:JwtSecret";
+    public const string DefaultIssuer = "supabase";
 
-public class VerificationService
-{
-    public VerificationService(ISupabaseHashStore store, IVideoFrameExtractor extractor);
-    public Task<VerificationResult> VerifyAsync(
-        Stream videoStream,
-        VerifyClaimMetadata metadata,
-        CancellationToken ct);
-}
-
-[ApiController]
-[Route("api/claims")]
-public class ClaimsController : ControllerBase
-{
-    [HttpPost("verify")]
-    [Consumes("multipart/form-data")]
-    [Authorize(Policy = "ValidatorOnly")]
-    public async Task<ActionResult<VerificationResult>> Verify(
-        [FromForm] VerifyClaimRequest request,
-        CancellationToken ct);
-}
-
-public enum Verdict
-{
-    Verified,
-    Suspicious,
-    Inconclusive
-}
-
-public class VerificationResult
-{
-    public Verdict Verdict { get; set; }
-    public string SessionId { get; set; } = string.Empty;
-    public int Threshold { get; set; }
-    public int ToleranceMs { get; set; }
-    public int IntervalMs { get; set; }
-    public int ExpectedSamples { get; set; }
-    public int MatchedSamples { get; set; }
-    public double MatchRatio { get; set; }
-    public double AvgDistance { get; set; }
-    public int MaxDistance { get; set; }
-    public List<MissingSpan> MissingSpans { get; set; } = new();
-    public List<string> Notes { get; set; } = new();
+    public static TokenValidationParameters BuildTokenValidationParameters(IConfiguration configuration)
+    {
+    }
 }
 ```
+
+Validator role requirement (`services/validator-api/Auth/ValidatorRoleRequirement.cs`):
+```csharp
+public sealed class ValidatorRoleRequirement : IAuthorizationRequirement
+{
+    public const string RoleName = "validator";
+}
+
+public sealed class ValidatorRoleHandler : AuthorizationHandler<ValidatorRoleRequirement>
+{
+    protected override Task HandleRequirementAsync(
+        AuthorizationHandlerContext context,
+        ValidatorRoleRequirement requirement)
+    {
+    }
+}
+```
+
+Verify endpoint protection (`services/validator-api/Controllers/ClaimsController.cs`):
+```csharp
+[HttpPost("verify")]
+[Consumes("multipart/form-data")]
+[Authorize(Policy = "ValidatorOnly")]
+public async Task<ActionResult<VerificationResult>> Verify([FromForm] VerifyClaimRequest request, CancellationToken ct)
+```
+
+Auth tests (`services/validator-api/Tests/AuthTests.cs`):
+```csharp
+public async Task Verify_Returns401_WhenMissingToken()
+```
+```csharp
+public async Task Verify_Returns403_WhenRoleIsNotValidator()
+```
+```csharp
+public async Task Verify_AllowsValidatorRole()
+```
+
+## Auth Model (Slice 5B)
+- Capture client: create a Supabase Auth user (email/password) and sign in from the capture-client UI.
+- Capture client session stored in localStorage (`capture-client.supabase.session`).
+- Validator portal: Supabase Auth login; session stored in localStorage (`validator-portal.supabase.session`).
+- Validator role assignment: `auth.users.raw_app_meta_data.role = "validator"`.
+- Portal → API: `Authorization: Bearer <access_token>`.
+- API enforcement:
+  - Missing/invalid token → 401
+  - Valid token without validator role → 403
+  - Valid validator token → 200
+- Note: metadata upload is still required until Slice 5C.
 
 ## Runtime Notes / How to Run
 
@@ -268,8 +331,8 @@ npm install
 npm run dev
 ```
 - URL: `http://localhost:8000`
+- Configure Supabase URL + anon key in the UI before signing in.
 - Mobile testing: HTTPS required for camera access.
- - Configure Supabase URL + anon key in the UI before signing in.
 
 ### validator-api
 ```bash
@@ -277,7 +340,7 @@ cd services/validator-api
 dotnet run
 ```
 - URLs: `https://localhost:5001` / `http://localhost:5000`
- - Requires `Supabase:JwtSecret` (from Supabase project settings) to validate JWTs.
+- Requires `Supabase:JwtSecret` (from Supabase project settings) to validate JWTs.
 
 ### validator-portal
 ```bash
@@ -286,25 +349,26 @@ npm install
 npm start
 ```
 - URL: `http://localhost:4200`
+- Configure Supabase URL + anon key in `apps/validator-portal/src/environments/environment.development.ts`.
 
 ## Auth Setup (Slice 5B)
-1) Create a validator user in Supabase Auth (email/password).
-2) Assign the validator role via app metadata (example SQL):
+1) Create a capture user in Supabase Auth (email/password) for the capture-client login.
+2) Create a validator user in Supabase Auth (email/password).
+3) Assign the validator role via app metadata (example SQL):
    ```sql
    update auth.users
-   set app_metadata = jsonb_set(coalesce(app_metadata, '{}'::jsonb), '{role}', '"validator"', true)
+   set raw_app_meta_data = jsonb_set(coalesce(raw_app_meta_data, '{}'::jsonb), '{role}', '"validator"', true)
    where email = 'validator@example.com';
    ```
-3) Sign out/in so the JWT includes the updated role claim.
-4) Set `Supabase:JwtSecret` in `services/validator-api/appsettings.Development.json` (or env var).
+4) Sign out/in so the JWT includes the updated role claim.
+5) Set `Supabase:JwtSecret` in `services/validator-api/appsettings.Development.json` (or env var).
 
-## Auth Manual Checklist — Slice 5B
-1) capture-client: with no login, Start Session stays disabled and uploads never fire.
-2) capture-client: sign in, then Start Session enables and inserts succeed.
-3) validator-portal: opening `/claims/verify` when logged out redirects to `/login`.
-4) validator-api: POST `/api/claims/verify` with no Authorization header returns 401.
-5) validator-api: POST with a valid token missing role=validator returns 403.
-6) validator-api: POST with validator token returns 200 and normal verification payload.
+## Manual Auth Verification Checklist (Slice 5B)
+1) capture-client logged out → Start Session disabled; uploads do not occur.
+2) capture-client logged in → can create session and hashes appear in Supabase.
+3) validator-portal logged out → `/claims/verify` redirects to `/login`.
+4) validator-portal logged in but not validator → API returns 403.
+5) validator-portal logged in as validator → verify endpoint returns 200 (metadata still required until Slice 5C).
 
 ## Demo Checklist (Happy Path) — Slice 5A
 1) Start camera → preview visible
@@ -314,5 +378,7 @@ npm start
 5) Online → backlog drains
 
 ## Evidence
-- Tests: not run in this sync (new: validator-api AuthTests, validator-portal AuthGuard spec)
-- Dev server start logs: not captured in this sync
+- dotnet test (validator-api): NOT RUN (no test execution in this sync)
+- npm test/build (validator-portal): NOT RUN (no test execution in this sync)
+- npm test/build (capture-client): NOT RUN (no test execution in this sync)
+- Dev server start logs: NOT RUN

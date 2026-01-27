@@ -1,0 +1,403 @@
+import { DEFAULT_ALGO_VERSION, DEFAULT_INTERVAL_MS } from "../constants";
+import { BrowserCameraFrameSource } from "../capture/frameSource";
+import { Sampler } from "../capture/sampler";
+import { InMemoryHashQueue } from "../storage/hashQueue";
+import type { HashQueue } from "../storage/hashQueue";
+import type { CaptureSession, FrameHashRecord } from "../models";
+import { FetchSupabaseApi } from "../supabase/supabaseApi";
+import type { SupabaseApi } from "../supabase/supabaseApi";
+import { Uploader } from "../supabase/uploader";
+
+interface QueueHooks {
+  onEnqueue?: (sessionId: string) => void;
+  onUploaded?: (sessionId: string, sampleIndex: number) => void;
+  triggerUpload?: () => void;
+}
+
+class UploadingQueue implements HashQueue {
+  private readonly inner: HashQueue;
+  private readonly hooks: QueueHooks;
+
+  constructor(inner: HashQueue, hooks: QueueHooks) {
+    this.inner = inner;
+    this.hooks = hooks;
+  }
+
+  async enqueue(record: Parameters<HashQueue["enqueue"]>[0]): Promise<void> {
+    await this.inner.enqueue(record);
+    this.hooks.onEnqueue?.(record.sessionId);
+    this.hooks.triggerUpload?.();
+  }
+
+  getOldestPending(limit: number): Promise<FrameHashRecord[]> {
+    return this.inner.getOldestPending(limit);
+  }
+
+  async markUploaded(sessionId: string, sampleIndex: number): Promise<void> {
+    await this.inner.markUploaded(sessionId, sampleIndex);
+    this.hooks.onUploaded?.(sessionId, sampleIndex);
+  }
+
+  countPending(sessionId?: string): Promise<number> | undefined {
+    return this.inner.countPending?.(sessionId);
+  }
+}
+
+function formatTime(): string {
+  const now = new Date();
+  return now.toLocaleTimeString();
+}
+
+function createSessionId(): string {
+  if (crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) =>
+    byte.toString(16).padStart(2, "0")
+  );
+  return [
+    hex.slice(0, 4).join(""),
+    hex.slice(4, 6).join(""),
+    hex.slice(6, 8).join(""),
+    hex.slice(8, 10).join(""),
+    hex.slice(10, 16).join(""),
+  ].join("-");
+}
+
+export function initCapturePage(root: HTMLElement): void {
+  root.innerHTML = `
+    <div class="page">
+      <header>
+        <h1>Dashcam Capture Client</h1>
+        <p>Slice 5A prototype: live camera sampling + hash upload.</p>
+        <div class="badge" id="online-indicator">Checking network...</div>
+      </header>
+
+      <div class="layout">
+        <section class="panel">
+          <h2>Session Setup</h2>
+          <div class="field">
+            <label for="supabase-url">Supabase URL</label>
+            <input id="supabase-url" type="text" placeholder="https://xxxx.supabase.co" />
+          </div>
+          <div class="field">
+            <label for="supabase-key">Supabase anon key</label>
+            <input id="supabase-key" type="password" placeholder="anon key" />
+          </div>
+          <div class="field">
+            <label for="supabase-token">Auth token (optional)</label>
+            <input id="supabase-token" type="password" placeholder="user access token" />
+          </div>
+          <div class="field">
+            <label for="sample-interval">Sampling interval (ms)</label>
+            <input id="sample-interval" type="number" min="100" step="50" value="500" />
+          </div>
+          <div class="controls">
+            <button id="start-camera">Start Camera</button>
+            <button id="start-session">Start Session</button>
+            <button id="stop-session" class="secondary">Stop Session</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Preview</h2>
+          <video id="camera-preview" autoplay muted playsinline></video>
+        </section>
+      </div>
+
+      <section class="panel">
+        <h2>Session Status</h2>
+        <div class="status-grid">
+          <div class="status-card">
+            <span>Session ID</span>
+            <strong id="session-id">-</strong>
+          </div>
+          <div class="status-card">
+            <span>Pending hashes</span>
+            <strong id="pending-count">0</strong>
+          </div>
+          <div class="status-card">
+            <span>Uploaded hashes</span>
+            <strong id="uploaded-count">0</strong>
+          </div>
+          <div class="status-card">
+            <span>Last uploaded index</span>
+            <strong id="last-uploaded">-</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Activity Log</h2>
+        <div id="log" class="log"></div>
+      </section>
+    </div>
+  `;
+
+  const onlineIndicator = root.querySelector<HTMLDivElement>(
+    "#online-indicator"
+  );
+  const supabaseUrlInput = root.querySelector<HTMLInputElement>(
+    "#supabase-url"
+  );
+  const supabaseKeyInput = root.querySelector<HTMLInputElement>(
+    "#supabase-key"
+  );
+  const supabaseTokenInput = root.querySelector<HTMLInputElement>(
+    "#supabase-token"
+  );
+  const sampleIntervalInput = root.querySelector<HTMLInputElement>(
+    "#sample-interval"
+  );
+  const startCameraButton = root.querySelector<HTMLButtonElement>(
+    "#start-camera"
+  );
+  const startSessionButton = root.querySelector<HTMLButtonElement>(
+    "#start-session"
+  );
+  const stopSessionButton = root.querySelector<HTMLButtonElement>(
+    "#stop-session"
+  );
+  const sessionIdLabel = root.querySelector<HTMLElement>("#session-id");
+  const pendingCountLabel = root.querySelector<HTMLElement>(
+    "#pending-count"
+  );
+  const uploadedCountLabel = root.querySelector<HTMLElement>(
+    "#uploaded-count"
+  );
+  const lastUploadedLabel = root.querySelector<HTMLElement>(
+    "#last-uploaded"
+  );
+  const logEl = root.querySelector<HTMLDivElement>("#log");
+  const preview = root.querySelector<HTMLVideoElement>("#camera-preview");
+
+  if (
+    !onlineIndicator ||
+    !supabaseUrlInput ||
+    !supabaseKeyInput ||
+    !supabaseTokenInput ||
+    !sampleIntervalInput ||
+    !startCameraButton ||
+    !startSessionButton ||
+    !stopSessionButton ||
+    !sessionIdLabel ||
+    !pendingCountLabel ||
+    !uploadedCountLabel ||
+    !lastUploadedLabel ||
+    !logEl ||
+    !preview
+  ) {
+    throw new Error("Capture UI is missing required elements.");
+  }
+
+  const LOCAL_STORAGE_KEYS = {
+    url: "capture-client.supabase.url",
+    key: "capture-client.supabase.key",
+    token: "capture-client.supabase.token",
+    interval: "capture-client.sampling.interval",
+  };
+
+  supabaseUrlInput.value =
+    localStorage.getItem(LOCAL_STORAGE_KEYS.url) ?? "";
+  supabaseKeyInput.value =
+    localStorage.getItem(LOCAL_STORAGE_KEYS.key) ?? "";
+  supabaseTokenInput.value =
+    localStorage.getItem(LOCAL_STORAGE_KEYS.token) ?? "";
+  sampleIntervalInput.value =
+    localStorage.getItem(LOCAL_STORAGE_KEYS.interval) ??
+    String(DEFAULT_INTERVAL_MS);
+
+  let camera: BrowserCameraFrameSource | null = null;
+  let sampler: Sampler | null = null;
+  let activeSession: CaptureSession | null = null;
+  let uploadedCount = 0;
+  let lastUploadedIndex: number | null = null;
+  let pendingCount = 0;
+
+  const baseQueue = new InMemoryHashQueue();
+  let uploader: Uploader | null = null;
+  let supabaseApi: FetchSupabaseApi | null = null;
+
+  const apiProxy: SupabaseApi = {
+    async insertSession(session) {
+      if (!supabaseApi) {
+        throw new Error("Supabase is not configured.");
+      }
+      return supabaseApi.insertSession(session);
+    },
+    async insertFrameHashes(records) {
+      if (!supabaseApi) {
+        throw new Error("Supabase is not configured.");
+      }
+      return supabaseApi.insertFrameHashes(records);
+    },
+  };
+
+  const queue = new UploadingQueue(baseQueue, {
+    onEnqueue: () => {
+      void refreshPendingCount();
+    },
+    onUploaded: (sessionId, sampleIndex) => {
+      if (activeSession && sessionId === activeSession.sessionId) {
+        uploadedCount += 1;
+        if (lastUploadedIndex === null || sampleIndex > lastUploadedIndex) {
+          lastUploadedIndex = sampleIndex;
+        }
+        log(`Uploaded sample #${sampleIndex}.`);
+        updateStatus();
+      }
+      void refreshPendingCount();
+    },
+    triggerUpload: () => {
+      void uploader?.uploadPending();
+    },
+  });
+
+  uploader = new Uploader(queue, apiProxy);
+  uploader.attachOnlineListener();
+
+  function log(message: string): void {
+    const line = `[${formatTime()}] ${message}`;
+    console.log(line);
+    logEl.textContent = [line, logEl.textContent].filter(Boolean).join("\n");
+  }
+
+  function updateOnlineIndicator(): void {
+    const online = navigator.onLine;
+    onlineIndicator.textContent = online ? "Online" : "Offline";
+    onlineIndicator.classList.toggle("online", online);
+    onlineIndicator.classList.toggle("offline", !online);
+  }
+
+  function updateStatus(): void {
+    sessionIdLabel.textContent = activeSession?.sessionId ?? "-";
+    pendingCountLabel.textContent = String(pendingCount);
+    uploadedCountLabel.textContent = String(uploadedCount);
+    lastUploadedLabel.textContent =
+      lastUploadedIndex !== null ? String(lastUploadedIndex) : "-";
+    startCameraButton.disabled = Boolean(camera);
+    startSessionButton.disabled = !camera || Boolean(sampler);
+    stopSessionButton.disabled = !sampler;
+  }
+
+  async function refreshPendingCount(): Promise<void> {
+    pendingCount = (await queue.countPending?.()) ?? pendingCount;
+    updateStatus();
+  }
+
+  function buildSupabaseApi(): FetchSupabaseApi {
+    const url = supabaseUrlInput.value.trim();
+    const anonKey = supabaseKeyInput.value.trim();
+    const accessToken = supabaseTokenInput.value.trim();
+
+    localStorage.setItem(LOCAL_STORAGE_KEYS.url, url);
+    localStorage.setItem(LOCAL_STORAGE_KEYS.key, anonKey);
+    localStorage.setItem(LOCAL_STORAGE_KEYS.token, accessToken);
+
+    if (!url || !anonKey) {
+      throw new Error("Supabase URL and anon key are required.");
+    }
+    return new FetchSupabaseApi({
+      url,
+      anonKey,
+      accessToken: accessToken || undefined,
+    });
+  }
+
+  startCameraButton.addEventListener("click", async () => {
+    if (camera) {
+      return;
+    }
+    try {
+      camera = new BrowserCameraFrameSource({
+        videoElement: preview,
+        facingMode: "environment",
+      });
+      await camera.start();
+      log("Camera started; preview should be visible.");
+      updateStatus();
+    } catch (error) {
+      log(`Camera start failed: ${String(error)}`);
+      camera = null;
+      updateStatus();
+    }
+  });
+
+  startSessionButton.addEventListener("click", async () => {
+    if (!camera) {
+      log("Start the camera before starting a session.");
+      return;
+    }
+    if (sampler) {
+      log("Session already running.");
+      return;
+    }
+
+    const intervalMs = Math.max(
+      100,
+      Number.parseInt(sampleIntervalInput.value, 10) || DEFAULT_INTERVAL_MS
+    );
+    sampleIntervalInput.value = String(intervalMs);
+    localStorage.setItem(LOCAL_STORAGE_KEYS.interval, String(intervalMs));
+
+    activeSession = {
+      sessionId: createSessionId(),
+      deviceClockStartEpochMs: Date.now(),
+      samplingIntervalMs: intervalMs,
+      algoVersion: DEFAULT_ALGO_VERSION,
+    };
+    uploadedCount = 0;
+    lastUploadedIndex = null;
+
+    supabaseApi = null;
+    try {
+      supabaseApi = buildSupabaseApi();
+      await apiProxy.insertSession(activeSession);
+      log(`insertSession ok: ${activeSession.sessionId}`);
+    } catch (error) {
+      log(`insertSession failed: ${String(error)}`);
+    }
+
+    sampler = new Sampler(
+      activeSession,
+      { samplingIntervalMs: intervalMs },
+      {
+        frameSource: camera,
+        queue,
+        now: Date.now,
+      }
+    );
+    sampler.start();
+    log(`Sampler started (interval ${intervalMs}ms).`);
+    updateStatus();
+    void refreshPendingCount();
+  });
+
+  stopSessionButton.addEventListener("click", () => {
+    if (!sampler) {
+      return;
+    }
+    sampler.stop();
+    sampler = null;
+    log("Sampler stopped; flushing pending uploads.");
+    void uploader?.uploadPending();
+    updateStatus();
+  });
+
+  window.addEventListener("online", () => {
+    updateOnlineIndicator();
+    log("Network online; attempting to flush uploads.");
+  });
+  window.addEventListener("offline", () => {
+    updateOnlineIndicator();
+    log("Network offline; uploads will buffer.");
+  });
+
+  updateOnlineIndicator();
+  updateStatus();
+  void refreshPendingCount();
+}

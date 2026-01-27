@@ -1,0 +1,41 @@
+<div class="auth-card">
+  <h1>Validator Login</h1>
+  <p>Sign in to verify claims.</p>
+
+  <form (ngSubmit)="signIn()">
+    <label for="email">Email</label>
+    <input
+      id="email"
+      type="email"
+      name="email"
+      [(ngModel)]="email"
+      placeholder="validator@example.com"
+      [disabled]="isLoading"
+      required
+    />
+
+    <label for="password">Password</label>
+    <input
+      id="password"
+      type="password"
+      name="password"
+      [(ngModel)]="password"
+      placeholder="password"
+      [disabled]="isLoading"
+      required
+    />
+
+    <button type="submit" [disabled]="isLoading">Sign In</button>
+  </form>
+
+  <button
+    type="button"
+    class="secondary"
+    (click)="signOut()"
+    [disabled]="isLoading || !isLoggedIn"
+  >
+    Sign Out
+  </button>
+
+  <p class="error" *ngIf="errorMessage">{{ errorMessage }}</p>
+</div>

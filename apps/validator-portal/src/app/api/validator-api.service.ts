@@ -33,10 +33,11 @@ export class ValidatorApiService {
 
   verifyClaim(
     videoFile: File,
-    metadataFile: File
+    metadataFile: File,
+    accessToken?: string | null
   ): Observable<VerificationResult> {
     const formData = buildVerifyClaimFormData(videoFile, metadataFile);
-    const headers = this.buildAuthHeaders();
+    const headers = this.buildAuthHeaders(accessToken);
     const url = this.buildUrl('/api/claims/verify');
 
     return this.http.post<VerificationResult>(url, formData, headers ? { headers } : {});
@@ -47,8 +48,8 @@ export class ValidatorApiService {
     return `${baseUrl}${path}`;
   }
 
-  private buildAuthHeaders(): HttpHeaders | null {
-    const token = this.tokenProvider?.();
+  private buildAuthHeaders(overrideToken?: string | null): HttpHeaders | null {
+    const token = overrideToken ?? this.tokenProvider?.();
     if (!token) {
       return null;
     }

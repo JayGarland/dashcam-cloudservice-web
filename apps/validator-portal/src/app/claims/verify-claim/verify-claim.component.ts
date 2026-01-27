@@ -2,6 +2,7 @@
 import { Component } from '@angular/core';
 
 import { ValidatorApiService } from '../../api/validator-api.service';
+import { AuthService } from '../../auth/auth.service';
 import { VerificationResult } from '../../models/verification.models';
 
 @Component({
@@ -16,7 +17,7 @@ export class VerifyClaimComponent {
   errorMessage = '';
   isLoading = false;
 
-  constructor(private api: ValidatorApiService) {}
+  constructor(private api: ValidatorApiService, private auth: AuthService) {}
 
   get verdictClass(): string {
     switch (this.result?.verdict) {
@@ -41,7 +42,7 @@ export class VerifyClaimComponent {
       input.files && input.files.length > 0 ? input.files[0] : undefined;
   }
 
-  submit(): void {
+  async submit(): Promise<void> {
     this.errorMessage = '';
 
     if (!this.videoFile || !this.metadataFile) {
@@ -49,10 +50,16 @@ export class VerifyClaimComponent {
       return;
     }
 
+    const accessToken = await this.auth.getAccessToken();
+    if (!accessToken) {
+      this.errorMessage = 'Please sign in before verifying a claim.';
+      return;
+    }
+
     this.isLoading = true;
     this.result = undefined;
 
-    this.api.verifyClaim(this.videoFile, this.metadataFile).subscribe({
+    this.api.verifyClaim(this.videoFile, this.metadataFile, accessToken).subscribe({
       next: (result) => {
         this.result = result;
         this.isLoading = false;

@@ -4,7 +4,14 @@ import { Sampler } from "../capture/sampler";
 import { InMemoryHashQueue } from "../storage/hashQueue";
 import type { HashQueue } from "../storage/hashQueue";
 import type { CaptureSession, FrameHashRecord } from "../models";
-import { FetchSupabaseApi } from "../supabase/supabaseApi";
+import {
+  FetchSupabaseApi,
+  configureSupabaseAuth,
+  getAccessToken,
+  getSession,
+  signIn,
+  signOut,
+} from "../supabase/supabaseApi";
 import type { SupabaseApi } from "../supabase/supabaseApi";
 import { Uploader } from "../supabase/uploader";
 
@@ -89,9 +96,18 @@ export function initCapturePage(root: HTMLElement): void {
             <input id="supabase-key" type="password" placeholder="anon key" />
           </div>
           <div class="field">
-            <label for="supabase-token">Auth token (optional)</label>
-            <input id="supabase-token" type="password" placeholder="user access token" />
+            <label for="auth-email">Login email</label>
+            <input id="auth-email" type="email" placeholder="user@example.com" />
           </div>
+          <div class="field">
+            <label for="auth-password">Login password</label>
+            <input id="auth-password" type="password" placeholder="password" />
+          </div>
+          <div class="controls">
+            <button id="auth-signin">Sign In</button>
+            <button id="auth-signout" class="secondary">Sign Out</button>
+          </div>
+          <div class="helper" id="auth-status">Not signed in</div>
           <div class="field">
             <label for="sample-interval">Sampling interval (ms)</label>
             <input id="sample-interval" type="number" min="100" step="50" value="500" />
@@ -147,9 +163,17 @@ export function initCapturePage(root: HTMLElement): void {
   const supabaseKeyInput = root.querySelector<HTMLInputElement>(
     "#supabase-key"
   );
-  const supabaseTokenInput = root.querySelector<HTMLInputElement>(
-    "#supabase-token"
+  const authEmailInput = root.querySelector<HTMLInputElement>("#auth-email");
+  const authPasswordInput = root.querySelector<HTMLInputElement>(
+    "#auth-password"
   );
+  const authSignInButton = root.querySelector<HTMLButtonElement>(
+    "#auth-signin"
+  );
+  const authSignOutButton = root.querySelector<HTMLButtonElement>(
+    "#auth-signout"
+  );
+  const authStatusLabel = root.querySelector<HTMLDivElement>("#auth-status");
   const sampleIntervalInput = root.querySelector<HTMLInputElement>(
     "#sample-interval"
   );
@@ -179,7 +203,11 @@ export function initCapturePage(root: HTMLElement): void {
     !onlineIndicator ||
     !supabaseUrlInput ||
     !supabaseKeyInput ||
-    !supabaseTokenInput ||
+    !authEmailInput ||
+    !authPasswordInput ||
+    !authSignInButton ||
+    !authSignOutButton ||
+    !authStatusLabel ||
     !sampleIntervalInput ||
     !startCameraButton ||
     !startSessionButton ||
@@ -197,7 +225,7 @@ export function initCapturePage(root: HTMLElement): void {
   const LOCAL_STORAGE_KEYS = {
     url: "capture-client.supabase.url",
     key: "capture-client.supabase.key",
-    token: "capture-client.supabase.token",
+    authEmail: "capture-client.supabase.auth.email",
     interval: "capture-client.sampling.interval",
   };
 
@@ -205,11 +233,16 @@ export function initCapturePage(root: HTMLElement): void {
     localStorage.getItem(LOCAL_STORAGE_KEYS.url) ?? "";
   supabaseKeyInput.value =
     localStorage.getItem(LOCAL_STORAGE_KEYS.key) ?? "";
-  supabaseTokenInput.value =
-    localStorage.getItem(LOCAL_STORAGE_KEYS.token) ?? "";
+  authEmailInput.value =
+    localStorage.getItem(LOCAL_STORAGE_KEYS.authEmail) ?? "";
   sampleIntervalInput.value =
     localStorage.getItem(LOCAL_STORAGE_KEYS.interval) ??
     String(DEFAULT_INTERVAL_MS);
+
+  configureSupabaseAuth({
+    url: supabaseUrlInput.value.trim(),
+    anonKey: supabaseKeyInput.value.trim(),
+  });
 
   let camera: BrowserCameraFrameSource | null = null;
   let sampler: Sampler | null = null;
@@ -217,6 +250,7 @@ export function initCapturePage(root: HTMLElement): void {
   let uploadedCount = 0;
   let lastUploadedIndex: number | null = null;
   let pendingCount = 0;
+  let isLoggedIn = Boolean(getSession());
 
   const baseQueue = new InMemoryHashQueue();
   let uploader: Uploader | null = null;
@@ -280,8 +314,20 @@ export function initCapturePage(root: HTMLElement): void {
     lastUploadedLabel.textContent =
       lastUploadedIndex !== null ? String(lastUploadedIndex) : "-";
     startCameraButton.disabled = Boolean(camera);
-    startSessionButton.disabled = !camera || Boolean(sampler);
+    startSessionButton.disabled = !camera || Boolean(sampler) || !isLoggedIn;
     stopSessionButton.disabled = !sampler;
+  }
+
+  function updateAuthStatus(): void {
+    const session = getSession();
+    isLoggedIn = Boolean(session);
+    const email = session?.user?.email ?? session?.user?.id ?? "user";
+    authStatusLabel.textContent = isLoggedIn
+      ? `Signed in as ${email}.`
+      : "Not signed in.";
+    authSignInButton.disabled = isLoggedIn;
+    authSignOutButton.disabled = !isLoggedIn;
+    updateStatus();
   }
 
   async function refreshPendingCount(): Promise<void> {
@@ -292,21 +338,61 @@ export function initCapturePage(root: HTMLElement): void {
   function buildSupabaseApi(): FetchSupabaseApi {
     const url = supabaseUrlInput.value.trim();
     const anonKey = supabaseKeyInput.value.trim();
-    const accessToken = supabaseTokenInput.value.trim();
 
     localStorage.setItem(LOCAL_STORAGE_KEYS.url, url);
     localStorage.setItem(LOCAL_STORAGE_KEYS.key, anonKey);
-    localStorage.setItem(LOCAL_STORAGE_KEYS.token, accessToken);
+    localStorage.setItem(LOCAL_STORAGE_KEYS.authEmail, authEmailInput.value.trim());
 
     if (!url || !anonKey) {
       throw new Error("Supabase URL and anon key are required.");
     }
+    configureSupabaseAuth({ url, anonKey });
     return new FetchSupabaseApi({
       url,
       anonKey,
-      accessToken: accessToken || undefined,
+      getAccessToken,
     });
   }
+
+  function syncSupabaseConfig(): void {
+    const url = supabaseUrlInput.value.trim();
+    const anonKey = supabaseKeyInput.value.trim();
+    localStorage.setItem(LOCAL_STORAGE_KEYS.url, url);
+    localStorage.setItem(LOCAL_STORAGE_KEYS.key, anonKey);
+    configureSupabaseAuth({ url, anonKey });
+    updateAuthStatus();
+  }
+
+  supabaseUrlInput.addEventListener("change", syncSupabaseConfig);
+  supabaseKeyInput.addEventListener("change", syncSupabaseConfig);
+
+  authSignInButton.addEventListener("click", async () => {
+    syncSupabaseConfig();
+    const email = authEmailInput.value.trim();
+    const password = authPasswordInput.value;
+    if (!email || !password) {
+      log("Email and password are required to sign in.");
+      return;
+    }
+    try {
+      await signIn(email, password);
+      localStorage.setItem(LOCAL_STORAGE_KEYS.authEmail, email);
+      log(`Signed in as ${email}.`);
+    } catch (error) {
+      log(`Sign-in failed: ${String(error)}`);
+    }
+    updateAuthStatus();
+  });
+
+  authSignOutButton.addEventListener("click", async () => {
+    try {
+      await signOut();
+      log("Signed out.");
+    } catch (error) {
+      log(`Sign-out failed: ${String(error)}`);
+    }
+    updateAuthStatus();
+  });
 
   startCameraButton.addEventListener("click", async () => {
     if (camera) {
@@ -334,6 +420,11 @@ export function initCapturePage(root: HTMLElement): void {
     }
     if (sampler) {
       log("Session already running.");
+      return;
+    }
+    if (!getSession()) {
+      log("Sign in before starting a session.");
+      updateAuthStatus();
       return;
     }
 
@@ -398,6 +489,7 @@ export function initCapturePage(root: HTMLElement): void {
   });
 
   updateOnlineIndicator();
+  updateAuthStatus();
   updateStatus();
   void refreshPendingCount();
 }

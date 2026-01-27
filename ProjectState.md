@@ -1,8 +1,8 @@
 # ProjectState
 
 ## Current Slice Status
-- Completed slices: 1, 2, 3, 4A–4D, 5A ✅
-- Pending slices: 5B, 5C, 5D
+- Completed slices: 1, 2, 3, 4A–4D, 5A, 5B ✅
+- Pending slices: 5C, 5D
 
 ## Repo Structure (Focused Snapshot)
 (Tree command unavailable; snapshot derived from `rg --files`.)
@@ -39,6 +39,9 @@ services/validator-api
 |-- validator-api.csproj
 |-- appsettings.json
 |-- appsettings.Development.example.json
+|-- Auth
+|   |-- SupabaseJwtValidator.cs
+|   `-- ValidatorRoleRequirement.cs
 |-- Controllers
 |   `-- ClaimsController.cs
 |-- Models
@@ -61,6 +64,7 @@ services/validator-api
 |   |-- SupabaseServiceCollectionExtensions.cs
 |   `-- VerificationService.cs
 `-- Tests
+    |-- AuthTests.cs
     |-- DHash64Tests.cs
     |-- FfmpegVideoFrameExtractorTests.cs
     |-- HashMatcherTests.cs
@@ -77,6 +81,14 @@ apps/validator-portal/src/app
 |-- app.component.html
 |-- app.component.ts
 |-- app.module.ts
+|-- auth
+|   |-- auth.component.css
+|   |-- auth.component.html
+|   |-- auth.component.ts
+|   |-- auth.guard.ts
+|   |-- auth.guard.spec.ts
+|   |-- auth.module.ts
+|   `-- auth.service.ts
 |-- api
 |   |-- validator-api.service.ts
 |   `-- validator-api.service.spec.ts
@@ -217,6 +229,7 @@ public class ClaimsController : ControllerBase
 {
     [HttpPost("verify")]
     [Consumes("multipart/form-data")]
+    [Authorize(Policy = "ValidatorOnly")]
     public async Task<ActionResult<VerificationResult>> Verify(
         [FromForm] VerifyClaimRequest request,
         CancellationToken ct);
@@ -256,6 +269,7 @@ npm run dev
 ```
 - URL: `http://localhost:8000`
 - Mobile testing: HTTPS required for camera access.
+ - Configure Supabase URL + anon key in the UI before signing in.
 
 ### validator-api
 ```bash
@@ -263,6 +277,7 @@ cd services/validator-api
 dotnet run
 ```
 - URLs: `https://localhost:5001` / `http://localhost:5000`
+ - Requires `Supabase:JwtSecret` (from Supabase project settings) to validate JWTs.
 
 ### validator-portal
 ```bash
@@ -272,6 +287,25 @@ npm start
 ```
 - URL: `http://localhost:4200`
 
+## Auth Setup (Slice 5B)
+1) Create a validator user in Supabase Auth (email/password).
+2) Assign the validator role via app metadata (example SQL):
+   ```sql
+   update auth.users
+   set app_metadata = jsonb_set(coalesce(app_metadata, '{}'::jsonb), '{role}', '"validator"', true)
+   where email = 'validator@example.com';
+   ```
+3) Sign out/in so the JWT includes the updated role claim.
+4) Set `Supabase:JwtSecret` in `services/validator-api/appsettings.Development.json` (or env var).
+
+## Auth Manual Checklist — Slice 5B
+1) capture-client: with no login, Start Session stays disabled and uploads never fire.
+2) capture-client: sign in, then Start Session enables and inserts succeed.
+3) validator-portal: opening `/claims/verify` when logged out redirects to `/login`.
+4) validator-api: POST `/api/claims/verify` with no Authorization header returns 401.
+5) validator-api: POST with a valid token missing role=validator returns 403.
+6) validator-api: POST with validator token returns 200 and normal verification payload.
+
 ## Demo Checklist (Happy Path) — Slice 5A
 1) Start camera → preview visible
 2) Start session → session row inserted in Supabase
@@ -280,5 +314,5 @@ npm start
 5) Online → backlog drains
 
 ## Evidence
-- Tests: not run in this sync
+- Tests: not run in this sync (new: validator-api AuthTests, validator-portal AuthGuard spec)
 - Dev server start logs: not captured in this sync

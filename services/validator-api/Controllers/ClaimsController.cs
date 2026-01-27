@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using ValidatorApi.Models;
@@ -25,6 +26,7 @@ public class ClaimsController : ControllerBase
 
     [HttpPost("verify")]
     [Consumes("multipart/form-data")]
+    [Authorize(Policy = "ValidatorOnly")]
     public async Task<ActionResult<VerificationResult>> Verify([FromForm] VerifyClaimRequest request, CancellationToken ct)
     {
         if (request is null || request.Video is null || request.Metadata is null)

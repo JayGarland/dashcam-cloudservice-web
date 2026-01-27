@@ -9,6 +9,7 @@
   },
   "devDependencies": {
     "esbuild": "^0.20.2",
+    "@supabase/supabase-js": "^2.39.3",
     "vitest": "^1.4.0",
     "typescript": "^5.3.3"
   }

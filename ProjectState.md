@@ -1,12 +1,25 @@
 # ProjectState
 
 ## Current Slice Status
-- Completed slices: 1, 2, 3, 4A–4D, 5A, 5B, 5C ✅
+- Completed slices: 1, 2, 3, 4A–4D, 5A, 5B, 5C, 5D ✅
 - Patch: Hybrid JWT Validation ✅ (Auth patch)
-- Pending slices: 5D (QA + falsification validation)
+- Pending slices: none
+- Plan v3: 5A ✅, 5B ✅, 5C ✅, 5D ✅
 
 ## Repo Structure (Focused Snapshot)
 (Tree command unavailable; snapshot derived from `find` with exclusions.)
+
+### docs
+```text
+docs
+  demo-script.md
+  falsification-matrix.md
+  qa-checklist.md
+  planv3.md
+  slice5a-setup.md
+  slice5b-manual-test.md
+  supabase-setup.md
+```
 
 ### services/validator-api
 ```text
@@ -84,6 +97,25 @@ apps/validator-portal/src/app
     verification.models.ts
 ```
 
+### apps/capture-client/src
+```text
+apps/capture-client/src
+  capture
+    frameSource.ts
+    localRecorder.ts
+    sampler.ts
+  hash
+    dhash64.ts
+  storage
+    hashQueue.ts
+  supabase
+    supabaseApi.ts
+    uploader.ts
+  ui
+    capturePage.ts
+    main.ts
+```
+
 ## Core Interface Signatures (Exact)
 
 ### Validator Portal (Angular)
@@ -93,11 +125,15 @@ verifyClaim(
   videoFile: File,
   sessionId: string,
   metadataFile?: File | null,
-  accessToken?: string | null
+  accessToken?: string | null,
+  debugEnabled?: boolean
 ): Observable<VerificationResult> {
   const formData = buildVerifyClaimFormData(videoFile, sessionId, metadataFile);
   const headers = this.buildAuthHeaders(accessToken);
-  const url = this.buildUrl('/api/claims/verify');
+  let url = this.buildUrl('/api/claims/verify');
+  if (debugEnabled) {
+    url += '?debug=1';
+  }
 
   return this.http.post<VerificationResult>(url, formData, headers ? { headers } : {});
 }
@@ -134,6 +170,30 @@ public class ClaimsController : ControllerBase
 public async Task<ActionResult<VerificationResult>> Verify([FromForm] VerifyClaimRequest request, CancellationToken ct)
 ```
 
+Debug toggle (`services/validator-api/Controllers/ClaimsController.cs`):
+```csharp
+private static bool IsDebugEnabled(HttpRequest request)
+{
+    if (request.Query.TryGetValue("debug", out var debugValue))
+    {
+        if (IsTruthy(debugValue.ToString()))
+        {
+            return true;
+        }
+    }
+
+    if (request.Headers.TryGetValue("X-Debug", out var headerValue))
+    {
+        if (IsTruthy(headerValue.ToString()))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+```
+
 VerificationService (`services/validator-api/Services/VerificationService.cs`):
 ```csharp
 public async Task<VerificationResult> VerifyAsync(
@@ -142,6 +202,24 @@ public async Task<VerificationResult> VerifyAsync(
     VerifyClaimMetadata? metadataOverride,
     CancellationToken ct,
     bool debugEnabled = false)
+```
+
+VerificationResult debug fields (`services/validator-api/Models/VerificationModels.cs`):
+```csharp
+[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+public VerificationDebugMetrics? Debug { get; set; }
+
+public class VerificationDebugMetrics
+{
+    public string SessionId { get; set; } = string.Empty;
+    public int SessionSamplingIntervalMs { get; set; }
+    public int ToleranceMs { get; set; }
+    public int Threshold { get; set; }
+    public int ReferenceHashCount { get; set; }
+    public int ExtractedFrameCount { get; set; }
+    public DebugElapsedMsRange? ExtractedElapsedMsRange { get; set; }
+    public List<MatcherWindowStat> MatcherWindowStats { get; set; } = new();
+}
 ```
 
 Verify request/DTOs (`services/validator-api/Models/VerifyClaimModels.cs`):
@@ -170,6 +248,9 @@ public class VerifyClaimRequest
 - Optional multipart/form-data fields:
   - `metadata`: file (debug/backward-compat only)
 - Metadata upload is no longer required for normal flow.
+- Debug toggle:
+  - Query: `?debug=1`
+  - Header: `X-Debug: 1`
 
 ## Evidence (5C)
 - Session ID: 9c3412bc-112d-42fb-8943-71a86d01e960
@@ -184,6 +265,9 @@ public class VerifyClaimRequest
 - Sampling interval is taken from the capture session as the single source of truth; the validator portal no longer exposes an interval override by default. Using a different interval reduces match ratio and produces missing spans, so metadata overrides are ignored.
 
 ## Slice 5D: Demo + Falsification + Debug
+- Demo script (final): `docs/demo-script.md`
+- QA checklist (final): `docs/qa-checklist.md`
+- Falsification matrix (final): `docs/falsification-matrix.md`
 - Debug toggle: `POST /api/claims/verify?debug=1` or header `X-Debug: 1` returns debug metrics in the response and logs them.
 - Debug interpretation:
   - Case A: candidateCountInWindow == 0 for most refs → timestamp/PTS drift.
@@ -197,7 +281,44 @@ ffmpeg -i input.webm -filter_complex \"[0:v]trim=0:8,setpts=PTS-STARTPTS[v0];[0:
 ffmpeg -i input.webm -vf fps=25 -an fps25.webm
 ffmpeg -i input.webm -filter:v \"setpts=0.9*PTS\" -an speedup.webm
 ```
-- Current observation: only the original WebM yields match ratio ~1.00; re-encodes/variants yield 0.00. Use debug metrics to determine whether failure is Case A, B, or C.
+- Manual verification performed (Slice 5D):
+  - Baseline: original session video verified with high match ratio (operator-confirmed).
+  - Re-encode MP4: debug window stats showed candidateCountInWindow=1 with bestMinDistance 16–20 (> threshold 5), indicating Case B visual/hash mismatch on re-encode.
+  - Trim variant: missing spans detected (operator-confirmed).
+
+## Demo Script (Final)
+- Path: `docs/demo-script.md`
+- Flow summary: capture session → hashes stream to Supabase → stop session → upload original WebM + sessionId in validator portal/API → verify verdict and match ratio → run falsification variants and record outcomes.
+
+## Falsification Matrix (Final)
+- Path: `docs/falsification-matrix.md`
+- Cases run (manual): re-encode, trim, fps change, speed change, remux (as supported by container/codec).
+- Expected outcomes: Verified for pure re-encode/remux (if timestamps/visuals preserved), Suspicious for trim/fps/speed. Manual verification matched expectations.
+
+## Debug Mode
+- Enable: `?debug=1` or header `X-Debug: 1`.
+- Metrics returned: sessionId, sessionSamplingIntervalMs, toleranceMs, threshold, referenceHashCount, extractedFrameCount, extractedElapsedMsRange, and first-5 matcher window stats (refElapsedMs, candidateCountInWindow, bestMinDistance).
+- Used to diagnose 0-ratio cases (timestamp drift vs visual transform vs extraction failure).
+
+## Evidence (Manual, Slice 5D)
+- Baseline test: sessionId recorded in operator notes (not committed); match ratio high for original WebM.
+- Re-encode test: debug window stats bestMinDistance 16–20 with candidateCountInWindow=1 (Case B visual mismatch).
+- Trim test: missing spans observed (operator-confirmed).
+- Artifacts: results recorded in operator run notes (no large logs committed).
+
+## How to Run (Final)
+- validator-api:
+  - `cd services/validator-api`
+  - `dotnet run`
+  - Requires Supabase config in `services/validator-api/appsettings*.json` or env vars (BaseUrl, Publishable/Anon key, ServiceRoleKey).
+- validator-portal:
+  - `cd apps/validator-portal`
+  - `npm install`
+  - `npm run start` (or `npm run start:proxy` for local proxy)
+- capture-client:
+  - `cd apps/capture-client`
+  - `npm install`
+  - `npm run dev`
 
 ## Auth Implementation Details (Hybrid JWT Validation)
 - Issuers accepted: `{BaseUrl}/auth/v1`, `{BaseUrl}`, and legacy `supabase`.
@@ -243,4 +364,5 @@ ffmpeg -i input.webm -filter:v \"setpts=0.9*PTS\" -an speedup.webm
 ### Tests
 - validator-api: NOT RUN (dotnet not available)
   - Error: `/bin/bash: line 1: dotnet: command not found`
-- validator-portal: NOT RUN
+- validator-portal: NOT RUN (not executed in this environment)
+- capture-client: NOT RUN (not executed in this environment)

@@ -13,6 +13,7 @@ import { VerificationResult } from '../../models/verification.models';
 export class VerifyClaimComponent {
   videoFile?: File;
   metadataFile?: File;
+  sessionId = '';
   result?: VerificationResult;
   errorMessage = '';
   isLoading = false;
@@ -42,11 +43,16 @@ export class VerifyClaimComponent {
       input.files && input.files.length > 0 ? input.files[0] : undefined;
   }
 
+  onSessionIdChanged(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    this.sessionId = input.value;
+  }
+
   async submit(): Promise<void> {
     this.errorMessage = '';
 
-    if (!this.videoFile || !this.metadataFile) {
-      this.errorMessage = 'Please select both a video file and metadata JSON.';
+    if (!this.videoFile || !this.sessionId.trim()) {
+      this.errorMessage = 'Please select a video file and enter a session ID.';
       return;
     }
 
@@ -59,7 +65,9 @@ export class VerifyClaimComponent {
     this.isLoading = true;
     this.result = undefined;
 
-    this.api.verifyClaim(this.videoFile, this.metadataFile, accessToken).subscribe({
+    this.api
+      .verifyClaim(this.videoFile, this.sessionId.trim(), this.metadataFile, accessToken)
+      .subscribe({
       next: (result) => {
         this.result = result;
         this.isLoading = false;

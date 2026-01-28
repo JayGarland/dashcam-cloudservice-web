@@ -83,10 +83,13 @@ public class AuthTests : IClassFixture<AuthTests.ValidatorApiFactory>
         var content = new MultipartFormDataContent();
         var videoContent = new ByteArrayContent(new byte[] { 0x01, 0x02, 0x03 });
         videoContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-        content.Add(videoContent, "Video", "clip.mp4");
+        content.Add(videoContent, "video", "clip.mp4");
 
         var metadataContent = new StringContent(metadataJson, Encoding.UTF8, "application/json");
-        content.Add(metadataContent, "Metadata", "metadata.json");
+        content.Add(metadataContent, "metadata", "metadata.json");
+
+        var sessionIdContent = new StringContent(metadata.SessionId, Encoding.UTF8, "text/plain");
+        content.Add(sessionIdContent, "sessionId");
 
         return content;
     }

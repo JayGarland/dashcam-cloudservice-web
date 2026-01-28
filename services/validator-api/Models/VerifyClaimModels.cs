@@ -15,4 +15,5 @@ public class VerifyClaimRequest
 {
     public IFormFile? Video { get; set; }
     public IFormFile? Metadata { get; set; }
+    public string? SessionId { get; set; }
 }

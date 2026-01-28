@@ -25,7 +25,7 @@ public class VerificationServiceTests
         var frames = BuildFramesForIndices(Enumerable.Range(0, 20).Where(i => i != 5 && i != 15), IntervalMs, rgba, width, height);
 
         var service = BuildService(sessionId, reference, frames);
-        var result = await service.VerifyAsync(new MemoryStream(new byte[] { 1 }), BuildMetadata(sessionId), CancellationToken.None);
+        var result = await service.VerifyAsync(new MemoryStream(new byte[] { 1 }), sessionId, BuildMetadata(sessionId), CancellationToken.None);
 
         Assert.Equal(Verdict.Verified, result.Verdict);
         Assert.InRange(result.MatchRatio, 0.90, 1.0);
@@ -43,7 +43,7 @@ public class VerificationServiceTests
         var frames = BuildFramesForIndices(Enumerable.Range(0, 10), IntervalMs, rgba, width, height);
 
         var service = BuildService(sessionId, reference, frames);
-        var result = await service.VerifyAsync(new MemoryStream(new byte[] { 1 }), BuildMetadata(sessionId), CancellationToken.None);
+        var result = await service.VerifyAsync(new MemoryStream(new byte[] { 1 }), sessionId, BuildMetadata(sessionId), CancellationToken.None);
 
         Assert.Equal(Verdict.Suspicious, result.Verdict);
         Assert.True(result.MatchRatio < 0.80);
@@ -59,7 +59,7 @@ public class VerificationServiceTests
         var frames = BuildFramesForIndices(Enumerable.Range(0, 60).Where(i => !missingIndices.Contains(i)), IntervalMs, rgba, width, height);
 
         var service = BuildService(sessionId, reference, frames);
-        var result = await service.VerifyAsync(new MemoryStream(new byte[] { 1 }), BuildMetadata(sessionId), CancellationToken.None);
+        var result = await service.VerifyAsync(new MemoryStream(new byte[] { 1 }), sessionId, BuildMetadata(sessionId), CancellationToken.None);
 
         Assert.Equal(Verdict.Suspicious, result.Verdict);
         Assert.NotEmpty(result.MissingSpans);
@@ -75,7 +75,7 @@ public class VerificationServiceTests
         var frames = BuildFramesForIndices(new[] { 0, 1, 2 }, IntervalMs, rgba, width, height);
 
         var service = BuildService(sessionId, reference, frames);
-        var result = await service.VerifyAsync(new MemoryStream(new byte[] { 1 }), BuildMetadata(sessionId), CancellationToken.None);
+        var result = await service.VerifyAsync(new MemoryStream(new byte[] { 1 }), sessionId, BuildMetadata(sessionId), CancellationToken.None);
 
         Assert.Equal(Verdict.Inconclusive, result.Verdict);
         Assert.Contains("Too few frames extracted", result.Notes);
@@ -94,7 +94,7 @@ public class VerificationServiceTests
         var service = BuildService(sessionId, reference, frames);
 
         await Assert.ThrowsAsync<ValidationException>(() =>
-            service.VerifyAsync(new MemoryStream(new byte[] { 1 }), metadata, CancellationToken.None));
+            service.VerifyAsync(new MemoryStream(new byte[] { 1 }), sessionId, metadata, CancellationToken.None));
     }
 
     private static VerificationService BuildService(

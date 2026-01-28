@@ -13,11 +13,15 @@ export const AUTH_TOKEN_PROVIDER = new InjectionToken<AuthTokenProvider>(
 
 export function buildVerifyClaimFormData(
   videoFile: File,
-  metadataFile: File
+  sessionId: string,
+  metadataFile?: File | null
 ): FormData {
   const formData = new FormData();
-  formData.append('Video', videoFile);
-  formData.append('Metadata', metadataFile);
+  formData.append('video', videoFile);
+  formData.append('sessionId', sessionId);
+  if (metadataFile) {
+    formData.append('metadata', metadataFile);
+  }
   return formData;
 }
 
@@ -33,10 +37,11 @@ export class ValidatorApiService {
 
   verifyClaim(
     videoFile: File,
-    metadataFile: File,
+    sessionId: string,
+    metadataFile?: File | null,
     accessToken?: string | null
   ): Observable<VerificationResult> {
-    const formData = buildVerifyClaimFormData(videoFile, metadataFile);
+    const formData = buildVerifyClaimFormData(videoFile, sessionId, metadataFile);
     const headers = this.buildAuthHeaders(accessToken);
     const url = this.buildUrl('/api/claims/verify');
 

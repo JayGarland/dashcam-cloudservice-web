@@ -29,31 +29,40 @@ public class ClaimsController : ControllerBase
     [Authorize(Policy = "ValidatorOnly")]
     public async Task<ActionResult<VerificationResult>> Verify([FromForm] VerifyClaimRequest request, CancellationToken ct)
     {
-        if (request is null || request.Video is null || request.Metadata is null)
+        if (request is null || request.Video is null)
         {
-            return BadRequest("Both video and metadata files are required.");
+            return BadRequest("Video file is required.");
         }
 
-        VerifyClaimMetadata? metadata;
-        try
+        var sessionId = request.SessionId?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(sessionId))
         {
-            await using var metadataStream = request.Metadata.OpenReadStream();
-            metadata = await JsonSerializer.DeserializeAsync<VerifyClaimMetadata>(metadataStream, JsonOptions, ct);
-        }
-        catch (JsonException)
-        {
-            return BadRequest("Invalid metadata JSON.");
+            return BadRequest("sessionId is required.");
         }
 
-        if (metadata is null)
+        VerifyClaimMetadata? metadata = null;
+        if (request.Metadata is not null)
         {
-            return BadRequest("Invalid metadata JSON.");
+            try
+            {
+                await using var metadataStream = request.Metadata.OpenReadStream();
+                metadata = await JsonSerializer.DeserializeAsync<VerifyClaimMetadata>(metadataStream, JsonOptions, ct);
+            }
+            catch (JsonException)
+            {
+                return BadRequest("Invalid metadata JSON.");
+            }
+
+            if (metadata is null)
+            {
+                return BadRequest("Invalid metadata JSON.");
+            }
         }
 
         try
         {
             await using var videoStream = request.Video.OpenReadStream();
-            var result = await _verificationService.VerifyAsync(videoStream, metadata, ct);
+            var result = await _verificationService.VerifyAsync(videoStream, sessionId, metadata, ct);
             return Ok(result);
         }
         catch (ValidationException ex)

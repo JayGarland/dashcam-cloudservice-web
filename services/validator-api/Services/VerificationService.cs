@@ -28,43 +28,32 @@ public class VerificationService
 
     public async Task<VerificationResult> VerifyAsync(
         Stream videoStream,
-        VerifyClaimMetadata metadata,
+        string sessionId,
+        VerifyClaimMetadata? metadataOverride,
         CancellationToken ct)
     {
         if (videoStream is null)
         {
             throw new ArgumentNullException(nameof(videoStream));
         }
-        if (metadata is null)
-        {
-            throw new ArgumentNullException(nameof(metadata));
-        }
 
-        var sessionId = metadata.SessionId?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(sessionId))
+        var normalizedSessionId = sessionId?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(normalizedSessionId))
         {
             throw new ValidationException("sessionId is required.");
         }
-        if (metadata.SamplingIntervalMs <= 0)
-        {
-            throw new ValidationException("samplingIntervalMs must be positive.");
-        }
-        if (!string.Equals(metadata.AlgoVersion, "dhash64_v1", StringComparison.Ordinal))
-        {
-            throw new ValidationException("algoVersion must be dhash64_v1.");
-        }
 
-        var intervalMs = metadata.SamplingIntervalMs > 0 ? metadata.SamplingIntervalMs : DefaultIntervalMs;
-        var toleranceMs = metadata.ToleranceMs ?? DefaultToleranceMs;
-        if (toleranceMs <= 0)
+        if (metadataOverride is not null
+            && !string.IsNullOrWhiteSpace(metadataOverride.SessionId)
+            && !string.Equals(metadataOverride.SessionId, normalizedSessionId, StringComparison.Ordinal))
         {
-            throw new ValidationException("toleranceMs must be positive.");
+            throw new ValidationException("sessionId does not match metadata sessionId.");
         }
 
         CaptureSession? session;
         try
         {
-            session = await _store.GetSessionAsync(sessionId, ct);
+            session = await _store.GetSessionAsync(normalizedSessionId, ct);
         }
         catch (SessionExpiredException)
         {
@@ -73,10 +62,30 @@ public class VerificationService
 
         if (session is null)
         {
-            throw new NotFoundException($"Session '{sessionId}' not found.");
+            throw new NotFoundException($"Session '{normalizedSessionId}' not found.");
         }
 
-        var reference = await _store.GetFrameHashesAsync(sessionId, ct) ?? Array.Empty<FrameHashRecord>();
+        var deviceClockStartEpochMs = metadataOverride?.DeviceClockStartEpochMs ?? session.DeviceClockStartEpochMs;
+        var samplingIntervalMs = metadataOverride?.SamplingIntervalMs ?? session.SamplingIntervalMs;
+        var algoVersion = metadataOverride?.AlgoVersion ?? session.AlgoVersion;
+        var toleranceMs = metadataOverride?.ToleranceMs ?? DefaultToleranceMs;
+
+        if (samplingIntervalMs <= 0)
+        {
+            throw new ValidationException("samplingIntervalMs must be positive.");
+        }
+        if (!string.Equals(algoVersion, "dhash64_v1", StringComparison.Ordinal))
+        {
+            throw new ValidationException("algoVersion must be dhash64_v1.");
+        }
+        if (toleranceMs <= 0)
+        {
+            throw new ValidationException("toleranceMs must be positive.");
+        }
+
+        var intervalMs = samplingIntervalMs > 0 ? samplingIntervalMs : DefaultIntervalMs;
+
+        var reference = await _store.GetFrameHashesAsync(normalizedSessionId, ct) ?? Array.Empty<FrameHashRecord>();
         var orderedReference = reference.OrderBy(r => r.ElapsedMs).ToList();
 
         var frames = await _extractor.ExtractFramesAsync(videoStream, intervalMs, ct) ?? Array.Empty<ExtractedFrame>();
@@ -90,17 +99,17 @@ public class VerificationService
             var hashValue = DHash64.FromRgba(frame.Rgba, frame.Width, frame.Height);
             var hashHex = DHash64.ToHex(hashValue);
             var elapsedMs = frame.ElapsedMs;
-            var sampleTimestampEpochMs = metadata.DeviceClockStartEpochMs + elapsedMs;
+            var sampleTimestampEpochMs = deviceClockStartEpochMs + elapsedMs;
 
             candidates.Add(new FrameHashRecord
             {
-                SessionId = sessionId,
+                SessionId = normalizedSessionId,
                 SampleIndex = i,
                 ElapsedMs = elapsedMs,
                 SampleTimestampEpochMs = sampleTimestampEpochMs,
                 HashHex = hashHex,
                 IntervalMs = intervalMs,
-                AlgoVersion = metadata.AlgoVersion,
+                AlgoVersion = algoVersion,
                 CreatedAtEpochMs = 0,
                 UploadState = "pending"
             });
@@ -138,7 +147,7 @@ public class VerificationService
         return new VerificationResult
         {
             Verdict = verdict,
-            SessionId = sessionId,
+            SessionId = normalizedSessionId,
             Threshold = DefaultDistanceThreshold,
             ToleranceMs = toleranceMs,
             IntervalMs = intervalMs,

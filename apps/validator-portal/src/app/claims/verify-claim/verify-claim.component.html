@@ -1,7 +1,7 @@
 ﻿<section class="panel">
   <h2 class="section-title">Verify Claim</h2>
   <p class="intro">
-    Select the captured video and the metadata JSON exported by the capture client.
+    Select the captured video and provide the session ID. Metadata JSON is optional.
   </p>
 
   <form class="form" (submit)="submit(); $event.preventDefault();">
@@ -17,7 +17,18 @@
     </div>
 
     <div class="field">
-      <label for="metadata">Metadata JSON</label>
+      <label for="sessionId">Session ID</label>
+      <input
+        id="sessionId"
+        type="text"
+        [value]="sessionId"
+        (input)="onSessionIdChanged($event)"
+        placeholder="e.g. 8f6c9d2a-..."
+      />
+    </div>
+
+    <div class="field">
+      <label for="metadata">Metadata JSON <span class="muted">Optional (advanced/debug)</span></label>
       <input
         id="metadata"
         type="file"
@@ -28,7 +39,7 @@
     </div>
 
     <div class="actions">
-      <button type="submit" [disabled]="isLoading || !videoFile || !metadataFile">
+      <button type="submit" [disabled]="isLoading || !videoFile || !sessionId">
         {{ isLoading ? 'Verifying...' : 'Verify Claim' }}
       </button>
       <span class="status" *ngIf="isLoading">Uploading + matching frames...</span>

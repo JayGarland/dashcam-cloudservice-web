@@ -1,5 +1,6 @@
 import { DEFAULT_ALGO_VERSION, DEFAULT_INTERVAL_MS } from "../constants";
 import { BrowserCameraFrameSource } from "../capture/frameSource";
+import { LocalRecorder } from "../capture/localRecorder";
 import { Sampler } from "../capture/sampler";
 import { InMemoryHashQueue } from "../storage/hashQueue";
 import type { HashQueue } from "../storage/hashQueue";
@@ -112,6 +113,13 @@ export function initCapturePage(root: HTMLElement): void {
             <label for="sample-interval">Sampling interval (ms)</label>
             <input id="sample-interval" type="number" min="100" step="50" value="500" />
           </div>
+          <div class="field">
+            <label>
+              <input id="record-local" type="checkbox" />
+              Record local video (optional)
+            </label>
+            <div class="helper" id="recording-warning"></div>
+          </div>
           <div class="controls">
             <button id="start-camera">Start Camera</button>
             <button id="start-session">Start Session</button>
@@ -143,6 +151,18 @@ export function initCapturePage(root: HTMLElement): void {
           <div class="status-card">
             <span>Last uploaded index</span>
             <strong id="last-uploaded">-</strong>
+          </div>
+          <div class="status-card">
+            <span>Recording</span>
+            <strong id="recording-status">Off</strong>
+          </div>
+        </div>
+        <div class="field">
+          <label>Local recording</label>
+          <div class="controls">
+            <a id="recording-download" class="badge" href="#" download hidden>
+              Download video
+            </a>
           </div>
         </div>
       </section>
@@ -177,6 +197,12 @@ export function initCapturePage(root: HTMLElement): void {
   const sampleIntervalInput = root.querySelector<HTMLInputElement>(
     "#sample-interval"
   );
+  const recordLocalToggle = root.querySelector<HTMLInputElement>(
+    "#record-local"
+  );
+  const recordingWarning = root.querySelector<HTMLDivElement>(
+    "#recording-warning"
+  );
   const startCameraButton = root.querySelector<HTMLButtonElement>(
     "#start-camera"
   );
@@ -196,6 +222,12 @@ export function initCapturePage(root: HTMLElement): void {
   const lastUploadedLabel = root.querySelector<HTMLElement>(
     "#last-uploaded"
   );
+  const recordingStatusLabel = root.querySelector<HTMLElement>(
+    "#recording-status"
+  );
+  const recordingDownloadLink = root.querySelector<HTMLAnchorElement>(
+    "#recording-download"
+  );
   const logEl = root.querySelector<HTMLDivElement>("#log");
   const preview = root.querySelector<HTMLVideoElement>("#camera-preview");
 
@@ -209,6 +241,8 @@ export function initCapturePage(root: HTMLElement): void {
     !authSignOutButton ||
     !authStatusLabel ||
     !sampleIntervalInput ||
+    !recordLocalToggle ||
+    !recordingWarning ||
     !startCameraButton ||
     !startSessionButton ||
     !stopSessionButton ||
@@ -216,6 +250,8 @@ export function initCapturePage(root: HTMLElement): void {
     !pendingCountLabel ||
     !uploadedCountLabel ||
     !lastUploadedLabel ||
+    !recordingStatusLabel ||
+    !recordingDownloadLink ||
     !logEl ||
     !preview
   ) {
@@ -251,6 +287,9 @@ export function initCapturePage(root: HTMLElement): void {
   let lastUploadedIndex: number | null = null;
   let pendingCount = 0;
   let isLoggedIn = Boolean(getSession());
+  let localRecorder: LocalRecorder | null = null;
+  let recordingActive = false;
+  let recordingDownloadUrl: string | null = null;
 
   const baseQueue = new InMemoryHashQueue();
   let uploader: Uploader | null = null;
@@ -313,9 +352,11 @@ export function initCapturePage(root: HTMLElement): void {
     uploadedCountLabel.textContent = String(uploadedCount);
     lastUploadedLabel.textContent =
       lastUploadedIndex !== null ? String(lastUploadedIndex) : "-";
+    recordingStatusLabel.textContent = recordingActive ? "Active" : "Off";
     startCameraButton.disabled = Boolean(camera);
     startSessionButton.disabled = !camera || Boolean(sampler) || !isLoggedIn;
     stopSessionButton.disabled = !sampler;
+    recordLocalToggle.disabled = Boolean(sampler);
   }
 
   function updateAuthStatus(): void {
@@ -333,6 +374,33 @@ export function initCapturePage(root: HTMLElement): void {
   async function refreshPendingCount(): Promise<void> {
     pendingCount = (await queue.countPending?.()) ?? pendingCount;
     updateStatus();
+  }
+
+  function setRecordingWarning(message: string): void {
+    recordingWarning.textContent = message;
+    recordingWarning.style.display = message ? "block" : "none";
+  }
+
+  function clearRecordingDownload(): void {
+    if (recordingDownloadUrl) {
+      URL.revokeObjectURL(recordingDownloadUrl);
+      recordingDownloadUrl = null;
+    }
+    recordingDownloadLink.hidden = true;
+    recordingDownloadLink.removeAttribute("href");
+    recordingDownloadLink.removeAttribute("download");
+  }
+
+  function extensionFromMimeType(mimeType: string): string {
+    if (!mimeType) {
+      return "webm";
+    }
+    const [type] = mimeType.split(";");
+    const parts = type.split("/");
+    if (parts.length === 2 && parts[1]) {
+      return parts[1];
+    }
+    return "webm";
   }
 
   function buildSupabaseApi(): FetchSupabaseApi {
@@ -428,6 +496,11 @@ export function initCapturePage(root: HTMLElement): void {
       return;
     }
 
+    recordingActive = false;
+    localRecorder = null;
+    clearRecordingDownload();
+    setRecordingWarning("");
+
     const intervalMs = Math.max(
       100,
       Number.parseInt(sampleIntervalInput.value, 10) || DEFAULT_INTERVAL_MS
@@ -464,11 +537,34 @@ export function initCapturePage(root: HTMLElement): void {
     );
     sampler.start();
     log(`Sampler started (interval ${intervalMs}ms).`);
+
+    if (recordLocalToggle.checked) {
+      const stream = camera.getVideoElement().srcObject;
+      if (!(stream instanceof MediaStream)) {
+        log("Recording could not start: camera stream unavailable.");
+        setRecordingWarning("Recording unavailable: camera stream missing.");
+      } else {
+        try {
+          localRecorder = new LocalRecorder(stream);
+          localRecorder.start();
+          recordingActive = true;
+          log("Local recording started.");
+        } catch (error) {
+          log(`Recording start failed: ${String(error)}`);
+          setRecordingWarning(
+            "Recording failed to start. Session will continue without video."
+          );
+          localRecorder = null;
+          recordingActive = false;
+        }
+      }
+    }
+
     updateStatus();
     void refreshPendingCount();
   });
 
-  stopSessionButton.addEventListener("click", () => {
+  stopSessionButton.addEventListener("click", async () => {
     if (!sampler) {
       return;
     }
@@ -476,6 +572,26 @@ export function initCapturePage(root: HTMLElement): void {
     sampler = null;
     log("Sampler stopped; flushing pending uploads.");
     void uploader?.uploadPending();
+    if (recordingActive && localRecorder) {
+      recordingActive = false;
+      updateStatus();
+      try {
+        const blob = await localRecorder.stop();
+        const mimeType = blob.type || localRecorder.activeMimeType || "";
+        const ext = extensionFromMimeType(mimeType);
+        const filename = `session_${activeSession?.sessionId ?? "unknown"}.${ext}`;
+        recordingDownloadUrl = URL.createObjectURL(blob);
+        recordingDownloadLink.href = recordingDownloadUrl;
+        recordingDownloadLink.download = filename;
+        recordingDownloadLink.textContent = `Download video (${ext})`;
+        recordingDownloadLink.hidden = false;
+        log("Local recording ready for download.");
+      } catch (error) {
+        log(`Recording stop failed: ${String(error)}`);
+      } finally {
+        localRecorder = null;
+      }
+    }
     updateStatus();
   });
 
@@ -488,6 +604,7 @@ export function initCapturePage(root: HTMLElement): void {
     log("Network offline; uploads will buffer.");
   });
 
+  setRecordingWarning("");
   updateOnlineIndicator();
   updateAuthStatus();
   updateStatus();

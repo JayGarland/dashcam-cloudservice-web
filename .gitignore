@@ -56,5 +56,7 @@ appsettings.Development.json
 appsettings.*.Development.json
 **/secrets.*
 **/*.secret.*
+environment.development.ts
+environment.ts
 
 /export

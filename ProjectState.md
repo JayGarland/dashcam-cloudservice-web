@@ -1,9 +1,8 @@
 # ProjectState
 
 ## Current Slice Status
-- Completed slices: 1, 2, 3, 4A–4D, 5A, 5B ✅
+- Completed slices: 1, 2, 3, 4A–4D, 5A, 5B, 5C ✅
 - Patch: Hybrid JWT Validation ✅ (Auth patch)
-- Slice 5C: pending, now unblocked by the auth patch
 - Pending slices: 5D
 
 ## Repo Structure (Focused Snapshot)
@@ -85,105 +84,43 @@ apps/validator-portal/src/app
     verification.models.ts
 ```
 
-### apps/capture-client/src
-```text
-apps/capture-client/src
-  src
-    __tests__
-      dhash64.spec.ts
-      hashQueue.spec.ts
-      sampler.spec.ts
-      uploader.spec.ts
-    capture
-      frameSource.ts
-      localRecorder.ts
-      sampler.ts
-    constants.ts
-    hash
-      dhash64.ts
-    models.ts
-    storage
-      hashQueue.ts
-    supabase
-      supabaseApi.ts
-      uploader.ts
-    ui
-      capturePage.ts
-      main.ts
-```
-
 ## Core Interface Signatures (Exact)
 
+### Validator Portal (Angular)
+Verify API client (`apps/validator-portal/src/app/api/validator-api.service.ts`):
+```ts
+verifyClaim(
+  videoFile: File,
+  sessionId: string,
+  metadataFile?: File | null,
+  accessToken?: string | null
+): Observable<VerificationResult> {
+  const formData = buildVerifyClaimFormData(videoFile, sessionId, metadataFile);
+  const headers = this.buildAuthHeaders(accessToken);
+  const url = this.buildUrl('/api/claims/verify');
+
+  return this.http.post<VerificationResult>(url, formData, headers ? { headers } : {});
+}
+```
+
+Verify-claim component FormData fields (`apps/validator-portal/src/app/api/validator-api.service.ts`):
+```ts
+export function buildVerifyClaimFormData(
+  videoFile: File,
+  sessionId: string,
+  metadataFile?: File | null
+): FormData {
+  const formData = new FormData();
+  formData.append('video', videoFile);
+  formData.append('sessionId', sessionId);
+  if (metadataFile) {
+    formData.append('metadata', metadataFile);
+  }
+  return formData;
+}
+```
+
 ### Validator API (ASP.NET Core)
-Supabase JWT validator (`services/validator-api/Auth/SupabaseJwtValidator.cs`):
-```csharp
-public sealed class SupabaseJwtValidator
-```
-```csharp
-public SupabaseJwtValidator(IConfiguration configuration, HttpClient httpClient)
-```
-```csharp
-public async Task<ClaimsPrincipal?> ValidateAsync(string jwt, CancellationToken ct)
-```
-```csharp
-private async Task<SecurityKey?> GetSigningKeyAsync(string kid, string? alg, CancellationToken ct)
-```
-```csharp
-private async Task<JsonWebKeySet?> FetchJwksAsync(CancellationToken ct)
-```
-```csharp
-private async Task<ClaimsPrincipal?> ValidateViaUserEndpointAsync(string jwt, CancellationToken ct)
-```
-```csharp
-private TokenValidationParameters BuildTokenValidationParameters(SecurityKey signingKey, string? algorithm)
-```
-
-Hybrid auth handler (`services/validator-api/Auth/SupabaseHybridAuthHandler.cs`):
-```csharp
-public sealed class SupabaseHybridAuthHandler : AuthenticationHandler<AuthenticationSchemeOptions>
-```
-```csharp
-public SupabaseHybridAuthHandler(
-    IOptionsMonitor<AuthenticationSchemeOptions> options,
-    ILoggerFactory logger,
-    UrlEncoder encoder,
-    ISystemClock clock,
-    SupabaseJwtValidator validator)
-```
-```csharp
-protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
-```
-
-Program auth wiring (`services/validator-api/Program.cs`):
-```csharp
-builder.Services
-    .AddAuthentication("SupabaseHybrid")
-    .AddScheme<AuthenticationSchemeOptions, SupabaseHybridAuthHandler>("SupabaseHybrid", _ => { });
-```
-```csharp
-builder.Services.AddAuthorization(options =>
-{
-    options.AddPolicy("ValidatorOnly", policy =>
-    {
-        policy.RequireAuthenticatedUser();
-        policy.AddRequirements(new ValidatorRoleRequirement());
-    });
-});
-```
-
-Validator role enforcement (`services/validator-api/Auth/ValidatorRoleRequirement.cs`):
-```csharp
-public sealed class ValidatorRoleRequirement : IAuthorizationRequirement
-```
-```csharp
-public sealed class ValidatorRoleHandler : AuthorizationHandler<ValidatorRoleRequirement>
-```
-```csharp
-protected override Task HandleRequirementAsync(
-    AuthorizationHandlerContext context,
-    ValidatorRoleRequirement requirement)
-```
-
 Claims endpoint (`services/validator-api/Controllers/ClaimsController.cs`):
 ```csharp
 [ApiController]
@@ -197,37 +134,53 @@ public class ClaimsController : ControllerBase
 public async Task<ActionResult<VerificationResult>> Verify([FromForm] VerifyClaimRequest request, CancellationToken ct)
 ```
 
-### Validator Portal (Angular)
-Auth service public API (`apps/validator-portal/src/app/auth/auth.service.ts`):
-```ts
-async signIn(email: string, password: string): Promise<void>
-```
-```ts
-async signOut(): Promise<void>
-```
-```ts
-getAccessTokenSync(): string | null
-```
-```ts
-async getAccessToken(): Promise<string | null>
-```
-```ts
-async isAuthenticated(): Promise<boolean>
+VerificationService (`services/validator-api/Services/VerificationService.cs`):
+```csharp
+public async Task<VerificationResult> VerifyAsync(
+    Stream videoStream,
+    string sessionId,
+    VerifyClaimMetadata? metadataOverride,
+    CancellationToken ct)
 ```
 
-Access token retrieval + Authorization header (`apps/validator-portal/src/app/api/validator-api.service.ts`):
-```ts
-private buildAuthHeaders(overrideToken?: string | null): HttpHeaders | null {
-  const token = overrideToken ?? this.tokenProvider?.();
-  if (!token) {
-    return null;
-  }
-  return new HttpHeaders({ Authorization: `Bearer ${token}` });
+Verify request/DTOs (`services/validator-api/Models/VerifyClaimModels.cs`):
+```csharp
+public class VerifyClaimMetadata
+{
+    public string SessionId { get; set; } = string.Empty;
+    public long DeviceClockStartEpochMs { get; set; }
+    public int SamplingIntervalMs { get; set; }
+    public string AlgoVersion { get; set; } = "dhash64_v1";
+    public int? ToleranceMs { get; set; }
+}
+
+public class VerifyClaimRequest
+{
+    public IFormFile? Video { get; set; }
+    public IFormFile? Metadata { get; set; }
+    public string? SessionId { get; set; }
 }
 ```
 
-### Capture Client
-No auth/config changes in this patch.
+## Verify Claim Contract (5C)
+- Required multipart/form-data fields:
+  - `video`: file
+  - `sessionId`: string
+- Optional multipart/form-data fields:
+  - `metadata`: file (debug/backward-compat only)
+- Metadata upload is no longer required for normal flow.
+
+## Evidence (5C)
+- Session ID: 9c3412bc-112d-42fb-8943-71a86d01e960
+- Match ratio: 0.30
+- Matched samples: 3 / 10
+- Avg distance: 4.33
+- Max distance: 5
+- Missing spans: 8000ms - 14000ms (No match within tolerance/threshold)
+- Notes: No notes from the verifier.
+
+## Important Notes / Expected Behavior
+- Changing samplingIntervalMs at verification time to a value different from the session’s stored samplingIntervalMs will reduce match ratio and produce missing spans. Verifier should use the session interval as the single source of truth (or reject mismatches).
 
 ## Auth Implementation Details (Hybrid JWT Validation)
 - Issuers accepted: `{BaseUrl}/auth/v1`, `{BaseUrl}`, and legacy `supabase`.
@@ -249,8 +202,6 @@ No auth/config changes in this patch.
   - `supabaseUrl`
   - `supabaseAnonKey`
   - `validatorApiBaseUrl`
-- capture-client (`apps/capture-client/src/ui/capturePage.ts` + localStorage):
-  - Supabase URL + anon key are entered in the UI and cached in localStorage (keys like `capture-client.supabase.url` / `capture-client.supabase.key`).
 
 ## Runtime Sanity Checks
 - Startup logs (validator-api) print:
@@ -262,6 +213,14 @@ No auth/config changes in this patch.
   - Missing/invalid token => 401
   - Authenticated but not `validator` role => 403
   - `validator` role => 200 (controller reached)
+
+## How to Run / Manual Demo Steps (5C)
+1) Sign in as a validator user in the validator portal.
+2) Enter the sessionId.
+3) Upload the video file.
+4) Click Verify.
+5) Review the result metrics.
+6) Optional: upload metadata only for debug/backward-compat.
 
 ## Evidence
 ### Tests

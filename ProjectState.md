@@ -180,7 +180,7 @@ public class VerifyClaimRequest
 - Notes: No notes from the verifier.
 
 ## Important Notes / Expected Behavior
-- Changing samplingIntervalMs at verification time to a value different from the session’s stored samplingIntervalMs will reduce match ratio and produce missing spans. Verifier should use the session interval as the single source of truth (or reject mismatches).
+- Sampling interval is taken from the capture session as the single source of truth; the validator portal no longer exposes an interval override by default. Using a different interval reduces match ratio and produces missing spans, so metadata overrides are ignored.
 
 ## Auth Implementation Details (Hybrid JWT Validation)
 - Issuers accepted: `{BaseUrl}/auth/v1`, `{BaseUrl}`, and legacy `supabase`.
@@ -227,4 +227,3 @@ public class VerifyClaimRequest
 - validator-api: NOT RUN (dotnet not available)
   - Error: `/bin/bash: line 1: dotnet: command not found`
 - validator-portal: NOT RUN
-

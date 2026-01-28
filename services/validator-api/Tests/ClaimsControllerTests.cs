@@ -85,7 +85,7 @@ public class ClaimsControllerTests
     }
 
     [Fact]
-    public async Task Verify_Succeeds_WithMetadataProvided()
+    public async Task Verify_Succeeds_WithMetadataProvided_AndUsesSessionInterval()
     {
         using var factory = new ValidatorApiFactory();
         var sessionId = "session-with-metadata";
@@ -107,8 +107,8 @@ public class ClaimsControllerTests
         var result = await response.Content.ReadFromJsonAsync<VerificationResult>();
         Assert.NotNull(result);
         Assert.Equal(sessionId, result!.SessionId);
-        Assert.Equal(600, result.IntervalMs);
-        Assert.Equal(600, factory.Extractor.LastIntervalMs);
+        Assert.Equal(750, result.IntervalMs);
+        Assert.Equal(750, factory.Extractor.LastIntervalMs);
     }
 
     private static MultipartFormDataContent BuildVerifyRequest(

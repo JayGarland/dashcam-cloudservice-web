@@ -66,7 +66,7 @@ public class VerificationService
         }
 
         var deviceClockStartEpochMs = metadataOverride?.DeviceClockStartEpochMs ?? session.DeviceClockStartEpochMs;
-        var samplingIntervalMs = metadataOverride?.SamplingIntervalMs ?? session.SamplingIntervalMs;
+        var samplingIntervalMs = session.SamplingIntervalMs;
         var algoVersion = metadataOverride?.AlgoVersion ?? session.AlgoVersion;
         var toleranceMs = metadataOverride?.ToleranceMs ?? DefaultToleranceMs;
 

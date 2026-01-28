@@ -35,6 +35,22 @@ public class VerificationServiceTests
     }
 
     [Fact]
+    public async Task VerifyAsync_UsesSessionInterval_WhenMetadataIntervalDiffers()
+    {
+        var (rgba, width, height, hashHex) = BuildFixtureFrame();
+        var sessionId = "session-interval-source";
+        var reference = BuildReference(sessionId, 10, IntervalMs, BaseEpochMs, hashHex);
+        var frames = BuildFramesForIndices(Enumerable.Range(0, 10), IntervalMs, rgba, width, height);
+        var metadata = BuildMetadata(sessionId);
+        metadata.SamplingIntervalMs = 2000;
+
+        var service = BuildService(sessionId, reference, frames);
+        var result = await service.VerifyAsync(new MemoryStream(new byte[] { 1 }), sessionId, metadata, CancellationToken.None);
+
+        Assert.Equal(IntervalMs, result.IntervalMs);
+    }
+
+    [Fact]
     public async Task VerifyAsync_ReturnsSuspicious_WhenRatioBelowThreshold()
     {
         var (rgba, width, height, hashHex) = BuildFixtureFrame();

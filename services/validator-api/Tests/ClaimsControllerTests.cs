@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IdentityModel.Tokens.Jwt;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -30,7 +29,7 @@ public class ClaimsControllerTests
     {
         using var factory = new ValidatorApiFactory();
         using var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", CreateJwtToken("validator"));
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", CreateUnsignedJwt());
 
         using var request = new MultipartFormDataContent();
         var videoContent = new ByteArrayContent(new byte[] { 0x01, 0x02, 0x03 });
@@ -50,7 +49,7 @@ public class ClaimsControllerTests
             Store = { Session = null }
         };
         using var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", CreateJwtToken("validator"));
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", CreateUnsignedJwt());
 
         using var request = BuildVerifyRequest("session-missing", includeMetadata: false);
         using var response = await client.PostAsync("/api/claims/verify", request);
@@ -72,7 +71,7 @@ public class ClaimsControllerTests
         };
 
         using var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", CreateJwtToken("validator"));
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", CreateUnsignedJwt());
 
         using var request = BuildVerifyRequest(sessionId, includeMetadata: false);
         using var response = await client.PostAsync("/api/claims/verify", request);
@@ -99,7 +98,7 @@ public class ClaimsControllerTests
         };
 
         using var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", CreateJwtToken("validator"));
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", CreateUnsignedJwt());
 
         using var request = BuildVerifyRequest(sessionId, includeMetadata: true, metadataIntervalMs: 600);
         using var response = await client.PostAsync("/api/claims/verify", request);
@@ -143,30 +142,27 @@ public class ClaimsControllerTests
         return content;
     }
 
-    private static string CreateJwtToken(string role)
+    private static string CreateUnsignedJwt()
     {
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(ValidatorApiFactory.JwtSecret));
-        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-        var now = DateTime.UtcNow;
+        var header = new Dictionary<string, object?>
+        {
+            ["alg"] = "HS256",
+            ["typ"] = "JWT"
+        };
+        var payload = new Dictionary<string, object?>
+        {
+            ["sub"] = "user-123"
+        };
 
-        var token = new JwtSecurityToken(
-            issuer: SupabaseJwtValidator.DefaultIssuer,
-            audience: null,
-            claims: new[]
-            {
-                new Claim(JwtRegisteredClaimNames.Sub, "user-123"),
-                new Claim("role", role)
-            },
-            notBefore: now.AddMinutes(-1),
-            expires: now.AddMinutes(30),
-            signingCredentials: creds);
-
-        return new JwtSecurityTokenHandler().WriteToken(token);
+        var headerJson = JsonSerializer.Serialize(header);
+        var payloadJson = JsonSerializer.Serialize(payload);
+        return $"{Base64UrlEncoder.Encode(Encoding.UTF8.GetBytes(headerJson))}." +
+               $"{Base64UrlEncoder.Encode(Encoding.UTF8.GetBytes(payloadJson))}.";
     }
 
     public class ValidatorApiFactory : WebApplicationFactory<Program>
     {
-        public const string JwtSecret = "test-jwt-secret-please-change-1234567890";
+        public TestSupabaseHandler SupabaseHandler { get; } = new();
 
         public TestSupabaseHashStore Store { get; } = new();
         public TestVideoFrameExtractor Extractor { get; } = new();
@@ -177,8 +173,8 @@ public class ClaimsControllerTests
             {
                 var config = new Dictionary<string, string?>
                 {
-                    ["Supabase:JwtSecret"] = JwtSecret,
                     ["Supabase:BaseUrl"] = "https://example.supabase.co",
+                    ["Supabase:PublishableKey"] = "test-publishable-key",
                     ["Supabase:ServiceRoleKey"] = "service-role-key",
                     ["Ffmpeg:Path"] = "ffmpeg"
                 };
@@ -187,6 +183,11 @@ public class ClaimsControllerTests
 
             builder.ConfigureServices(services =>
             {
+                services.RemoveAll<SupabaseJwtValidator>();
+                services.AddSingleton(sp => new SupabaseJwtValidator(
+                    sp.GetRequiredService<IConfiguration>(),
+                    new HttpClient(SupabaseHandler)));
+
                 services.RemoveAll<ISupabaseHashStore>();
                 services.RemoveAll<IVideoFrameExtractor>();
 
@@ -194,6 +195,33 @@ public class ClaimsControllerTests
                 services.AddSingleton<IVideoFrameExtractor>(Extractor);
                 services.AddScoped<VerificationService>();
             });
+        }
+    }
+
+    private sealed class TestSupabaseHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (path.EndsWith("/auth/v1/user", StringComparison.OrdinalIgnoreCase))
+            {
+                var json = JsonSerializer.Serialize(new
+                {
+                    id = "user-123",
+                    email = "a@b.com",
+                    app_metadata = new
+                    {
+                        role = "validator"
+                    }
+                });
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, Encoding.UTF8, "application/json")
+                };
+                return Task.FromResult(response);
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
         }
     }
 

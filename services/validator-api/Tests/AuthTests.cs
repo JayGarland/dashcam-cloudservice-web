@@ -6,6 +6,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -22,19 +23,92 @@ using Xunit;
 
 namespace ValidatorApi.Tests;
 
-public class AuthTests : IClassFixture<AuthTests.ValidatorApiFactory>
+public class AuthTests
 {
-    private readonly ValidatorApiFactory _factory;
+    private const string TestBaseUrl = "https://example.supabase.co";
+    private const string TestPublishableKey = "test-publishable-key";
 
-    public AuthTests(ValidatorApiFactory factory)
+    [Fact]
+    public async Task ValidateAsync_NoKid_UsesUserEndpoint()
     {
-        _factory = factory;
+        var handler = new TestSupabaseHandler
+        {
+            UserResponder = _ => BuildJsonResponse(HttpStatusCode.OK, BuildUserResponseJson("validator"))
+        };
+        using var httpClient = new HttpClient(handler);
+        var validator = new SupabaseJwtValidator(BuildConfiguration(), httpClient);
+        var token = CreateUnsignedJwt();
+
+        var principal = await validator.ValidateAsync(token, CancellationToken.None);
+
+        Assert.NotNull(principal);
+        Assert.Equal("user-123", principal!.FindFirst(ClaimTypes.NameIdentifier)?.Value);
+        Assert.True(principal.IsInRole(ValidatorRoleRequirement.RoleName));
+        Assert.Equal(1, handler.UserCalls);
+        Assert.Equal(0, handler.JwksCalls);
+    }
+
+    [Fact]
+    public async Task ValidateAsync_NoKid_FailsWhenUserUnauthorized()
+    {
+        var handler = new TestSupabaseHandler
+        {
+            UserResponder = _ => new HttpResponseMessage(HttpStatusCode.Unauthorized)
+        };
+        using var httpClient = new HttpClient(handler);
+        var validator = new SupabaseJwtValidator(BuildConfiguration(), httpClient);
+        var token = CreateUnsignedJwt();
+
+        var principal = await validator.ValidateAsync(token, CancellationToken.None);
+
+        Assert.Null(principal);
+        Assert.Equal(1, handler.UserCalls);
+    }
+
+    [Fact]
+    public async Task ValidateAsync_WithKid_UsesJwksAndSkipsUserEndpoint()
+    {
+        var jwt = CreateSignedEs256Jwt($"{TestBaseUrl}/auth/v1", "k1", out var jwk);
+        var jwksJson = BuildJwksJson(jwk);
+        var handler = new TestSupabaseHandler
+        {
+            JwksResponder = _ => BuildJsonResponse(HttpStatusCode.OK, jwksJson),
+            UserResponder = _ => BuildJsonResponse(HttpStatusCode.OK, BuildUserResponseJson("validator"))
+        };
+        using var httpClient = new HttpClient(handler);
+        var validator = new SupabaseJwtValidator(BuildConfiguration(), httpClient);
+
+        var principal = await validator.ValidateAsync(jwt, CancellationToken.None);
+
+        Assert.NotNull(principal);
+        Assert.Equal(1, handler.JwksCalls);
+        Assert.Equal(0, handler.UserCalls);
+    }
+
+    [Fact]
+    public async Task ValidateAsync_WithKid_FallsBackToUserWhenJwksEmpty()
+    {
+        var token = CreateUnsignedJwt("k1", "ES256");
+        var handler = new TestSupabaseHandler
+        {
+            JwksResponder = _ => BuildJsonResponse(HttpStatusCode.OK, "{\"keys\":[]}"),
+            UserResponder = _ => BuildJsonResponse(HttpStatusCode.OK, BuildUserResponseJson("validator"))
+        };
+        using var httpClient = new HttpClient(handler);
+        var validator = new SupabaseJwtValidator(BuildConfiguration(), httpClient);
+
+        var principal = await validator.ValidateAsync(token, CancellationToken.None);
+
+        Assert.NotNull(principal);
+        Assert.Equal(1, handler.JwksCalls);
+        Assert.Equal(1, handler.UserCalls);
     }
 
     [Fact]
     public async Task Verify_Returns401_WhenMissingToken()
     {
-        using var client = _factory.CreateClient();
+        using var factory = new ValidatorApiFactory();
+        using var client = factory.CreateClient();
         using var request = BuildVerifyRequest();
 
         using var response = await client.PostAsync("/api/claims/verify", request);
@@ -45,9 +119,12 @@ public class AuthTests : IClassFixture<AuthTests.ValidatorApiFactory>
     [Fact]
     public async Task Verify_Returns403_WhenRoleIsNotValidator()
     {
-        using var client = _factory.CreateClient();
+        using var factory = new ValidatorApiFactory();
+        factory.SupabaseHandler.UserResponder = _ =>
+            BuildJsonResponse(HttpStatusCode.OK, BuildUserResponseJson("authenticated"));
+        using var client = factory.CreateClient();
         using var request = BuildVerifyRequest();
-        var token = CreateJwtToken("authenticated");
+        var token = CreateUnsignedJwt();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         using var response = await client.PostAsync("/api/claims/verify", request);
@@ -58,14 +135,29 @@ public class AuthTests : IClassFixture<AuthTests.ValidatorApiFactory>
     [Fact]
     public async Task Verify_AllowsValidatorRole()
     {
-        using var client = _factory.CreateClient();
+        using var factory = new ValidatorApiFactory();
+        factory.SupabaseHandler.UserResponder = _ =>
+            BuildJsonResponse(HttpStatusCode.OK, BuildUserResponseJson("validator"));
+        using var client = factory.CreateClient();
         using var request = BuildVerifyRequest();
-        var token = CreateJwtToken("validator");
+        var token = CreateUnsignedJwt();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         using var response = await client.PostAsync("/api/claims/verify", request);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    private static IConfiguration BuildConfiguration()
+    {
+        var config = new Dictionary<string, string?>
+        {
+            ["Supabase:BaseUrl"] = TestBaseUrl,
+            ["Supabase:PublishableKey"] = TestPublishableKey
+        };
+        return new ConfigurationBuilder()
+            .AddInMemoryCollection(config)
+            .Build();
     }
 
     private static MultipartFormDataContent BuildVerifyRequest()
@@ -94,30 +186,110 @@ public class AuthTests : IClassFixture<AuthTests.ValidatorApiFactory>
         return content;
     }
 
-    private static string CreateJwtToken(string role)
+    private static string CreateUnsignedJwt(string? kid = null, string? alg = null)
     {
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(ValidatorApiFactory.JwtSecret));
-        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+        var header = new Dictionary<string, object?>
+        {
+            ["alg"] = string.IsNullOrWhiteSpace(alg) ? "HS256" : alg,
+            ["typ"] = "JWT"
+        };
+        if (!string.IsNullOrWhiteSpace(kid))
+        {
+            header["kid"] = kid;
+        }
+
+        var payload = new Dictionary<string, object?>
+        {
+            ["sub"] = "user-123"
+        };
+
+        var headerJson = JsonSerializer.Serialize(header);
+        var payloadJson = JsonSerializer.Serialize(payload);
+        return $"{Base64UrlEncoder.Encode(Encoding.UTF8.GetBytes(headerJson))}." +
+               $"{Base64UrlEncoder.Encode(Encoding.UTF8.GetBytes(payloadJson))}.";
+    }
+
+    private static string CreateSignedEs256Jwt(string issuer, string kid, out JsonWebKey jwk)
+    {
+        using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var key = new ECDsaSecurityKey(ecdsa) { KeyId = kid };
+        var creds = new SigningCredentials(key, SecurityAlgorithms.EcdsaSha256);
         var now = DateTime.UtcNow;
 
         var token = new JwtSecurityToken(
-            issuer: SupabaseJwtValidator.DefaultIssuer,
+            issuer: issuer,
             audience: null,
             claims: new[]
             {
                 new Claim(JwtRegisteredClaimNames.Sub, "user-123"),
-                new Claim("role", role)
+                new Claim("role", "validator")
             },
             notBefore: now.AddMinutes(-1),
             expires: now.AddMinutes(30),
             signingCredentials: creds);
+        token.Header["kid"] = kid;
+
+        var parameters = ecdsa.ExportParameters(false);
+        jwk = new JsonWebKey
+        {
+            Kty = "EC",
+            Crv = "P-256",
+            X = Base64UrlEncoder.Encode(parameters.Q.X),
+            Y = Base64UrlEncoder.Encode(parameters.Q.Y),
+            Kid = kid,
+            Alg = "ES256",
+            Use = "sig"
+        };
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
+    private static string BuildUserResponseJson(string role)
+    {
+        var payload = new
+        {
+            id = "user-123",
+            email = "a@b.com",
+            app_metadata = new
+            {
+                role
+            }
+        };
+        return JsonSerializer.Serialize(payload);
+    }
+
+    private static string BuildJwksJson(JsonWebKey jwk)
+    {
+        var payload = new
+        {
+            keys = new[]
+            {
+                new Dictionary<string, string?>
+                {
+                    ["kty"] = jwk.Kty,
+                    ["crv"] = jwk.Crv,
+                    ["x"] = jwk.X,
+                    ["y"] = jwk.Y,
+                    ["kid"] = jwk.Kid,
+                    ["alg"] = jwk.Alg,
+                    ["use"] = jwk.Use
+                }
+            }
+        };
+        return JsonSerializer.Serialize(payload);
+    }
+
+    private static HttpResponseMessage BuildJsonResponse(HttpStatusCode status, string json)
+    {
+        return new HttpResponseMessage(status)
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json")
+        };
+    }
+
     public class ValidatorApiFactory : WebApplicationFactory<Program>
     {
-        public const string JwtSecret = "test-jwt-secret-please-change-1234567890";
+        public TestSupabaseHandler SupabaseHandler { get; } = new();
 
         protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
         {
@@ -125,8 +297,8 @@ public class AuthTests : IClassFixture<AuthTests.ValidatorApiFactory>
             {
                 var config = new Dictionary<string, string?>
                 {
-                    ["Supabase:JwtSecret"] = JwtSecret,
-                    ["Supabase:BaseUrl"] = "https://example.supabase.co",
+                    ["Supabase:BaseUrl"] = TestBaseUrl,
+                    ["Supabase:PublishableKey"] = TestPublishableKey,
                     ["Supabase:ServiceRoleKey"] = "service-role-key",
                     ["Ffmpeg:Path"] = "ffmpeg"
                 };
@@ -135,6 +307,11 @@ public class AuthTests : IClassFixture<AuthTests.ValidatorApiFactory>
 
             builder.ConfigureServices(services =>
             {
+                services.RemoveAll<SupabaseJwtValidator>();
+                services.AddSingleton(sp => new SupabaseJwtValidator(
+                    sp.GetRequiredService<IConfiguration>(),
+                    new HttpClient(SupabaseHandler)));
+
                 services.RemoveAll<ISupabaseHashStore>();
                 services.RemoveAll<IVideoFrameExtractor>();
 
@@ -142,6 +319,33 @@ public class AuthTests : IClassFixture<AuthTests.ValidatorApiFactory>
                 services.AddSingleton<IVideoFrameExtractor>(new FakeVideoFrameExtractor());
                 services.AddScoped<VerificationService>();
             });
+        }
+    }
+
+    private sealed class TestSupabaseHandler : HttpMessageHandler
+    {
+        public int JwksCalls { get; private set; }
+        public int UserCalls { get; private set; }
+        public Func<HttpRequestMessage, HttpResponseMessage>? JwksResponder { get; set; }
+        public Func<HttpRequestMessage, HttpResponseMessage>? UserResponder { get; set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+
+            if (path.EndsWith("/auth/v1/.well-known/jwks.json", StringComparison.OrdinalIgnoreCase))
+            {
+                JwksCalls++;
+                return Task.FromResult(JwksResponder?.Invoke(request) ?? new HttpResponseMessage(HttpStatusCode.NotFound));
+            }
+
+            if (path.EndsWith("/auth/v1/user", StringComparison.OrdinalIgnoreCase))
+            {
+                UserCalls++;
+                return Task.FromResult(UserResponder?.Invoke(request) ?? new HttpResponseMessage(HttpStatusCode.Unauthorized));
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
         }
     }
 

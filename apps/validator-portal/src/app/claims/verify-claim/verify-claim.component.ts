@@ -14,6 +14,7 @@ export class VerifyClaimComponent {
   videoFile?: File;
   metadataFile?: File;
   sessionId = '';
+  debugEnabled = false;
   result?: VerificationResult;
   errorMessage = '';
   isLoading = false;
@@ -66,7 +67,7 @@ export class VerifyClaimComponent {
     this.result = undefined;
 
     this.api
-      .verifyClaim(this.videoFile, this.sessionId.trim(), this.metadataFile, accessToken)
+      .verifyClaim(this.videoFile, this.sessionId.trim(), this.metadataFile, accessToken, this.debugEnabled)
       .subscribe({
       next: (result) => {
         this.result = result;

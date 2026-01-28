@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging.Abstractions;
 using ValidatorApi.Models;
 using ValidatorApi.Services;
 using Xunit;
@@ -126,7 +127,7 @@ public class VerificationServiceTests
             AlgoVersion = "dhash64_v1"
         }, reference);
         var extractor = new FakeVideoFrameExtractor(frames);
-        return new VerificationService(store, extractor);
+        return new VerificationService(store, extractor, NullLogger<VerificationService>.Instance);
     }
 
     private static VerifyClaimMetadata BuildMetadata(string sessionId)

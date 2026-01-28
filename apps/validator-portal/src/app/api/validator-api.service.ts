@@ -39,11 +39,15 @@ export class ValidatorApiService {
     videoFile: File,
     sessionId: string,
     metadataFile?: File | null,
-    accessToken?: string | null
+    accessToken?: string | null,
+    debugEnabled?: boolean
   ): Observable<VerificationResult> {
     const formData = buildVerifyClaimFormData(videoFile, sessionId, metadataFile);
     const headers = this.buildAuthHeaders(accessToken);
-    const url = this.buildUrl('/api/claims/verify');
+    let url = this.buildUrl('/api/claims/verify');
+    if (debugEnabled) {
+      url += '?debug=1';
+    }
 
     return this.http.post<VerificationResult>(url, formData, headers ? { headers } : {});
   }

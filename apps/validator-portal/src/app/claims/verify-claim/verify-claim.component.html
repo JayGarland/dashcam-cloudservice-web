@@ -38,6 +38,17 @@
       <span class="hint" *ngIf="metadataFile">Selected: {{ metadataFile.name }}</span>
     </div>
 
+    <div class="field">
+      <label>
+        <input
+          type="checkbox"
+          [(ngModel)]="debugEnabled"
+          name="debugEnabled"
+        />
+        Enable debug mode
+      </label>
+    </div>
+
     <div class="actions">
       <button type="submit" [disabled]="isLoading || !videoFile || !sessionId">
         {{ isLoading ? 'Verifying...' : 'Verify Claim' }}
@@ -106,6 +117,41 @@
       <ng-template #noNotes>
         <p class="muted">No notes from the verifier.</p>
       </ng-template>
+    </div>
+
+    <div *ngIf="result.debug">
+      <h3>Debug Metrics</h3>
+      <div class="debug-section">
+        <p><strong>Session Sampling Interval:</strong> {{ result.debug.sessionSamplingIntervalMs }}ms</p>
+        <p><strong>Tolerance:</strong> {{ result.debug.toleranceMs }}ms</p>
+        <p><strong>Threshold:</strong> {{ result.debug.threshold }}</p>
+        <p><strong>Reference Hash Count:</strong> {{ result.debug.referenceHashCount }}</p>
+        <p><strong>Extracted Frame Count:</strong> {{ result.debug.extractedFrameCount }}</p>
+        <p *ngIf="result.debug.extractedElapsedMsRange">
+          <strong>Extracted Elapsed Range:</strong> 
+          {{ result.debug.extractedElapsedMsRange.minElapsedMs }}ms - 
+          {{ result.debug.extractedElapsedMsRange.maxElapsedMs }}ms
+        </p>
+        <div *ngIf="result.debug.matcherWindowStats?.length">
+          <h4>Matcher Window Stats (First 5 samples)</h4>
+          <table class="debug-table">
+            <thead>
+              <tr>
+                <th>Ref Elapsed (ms)</th>
+                <th>Candidates in Window</th>
+                <th>Best Min Distance</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let stat of result.debug.matcherWindowStats">
+                <td>{{ stat.refElapsedMs }}</td>
+                <td>{{ stat.candidateCountInWindow }}</td>
+                <td>{{ stat.bestMinDistance ?? 'N/A' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 </section>

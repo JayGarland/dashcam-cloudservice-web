@@ -1,3 +1,4 @@
+using System;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
@@ -62,7 +63,8 @@ public class ClaimsController : ControllerBase
         try
         {
             await using var videoStream = request.Video.OpenReadStream();
-            var result = await _verificationService.VerifyAsync(videoStream, sessionId, metadata, ct);
+            var debugEnabled = IsDebugEnabled(Request);
+            var result = await _verificationService.VerifyAsync(videoStream, sessionId, metadata, ct, debugEnabled);
             return Ok(result);
         }
         catch (ValidationException ex)
@@ -77,5 +79,38 @@ public class ClaimsController : ControllerBase
         {
             return StatusCode(StatusCodes.Status410Gone);
         }
+    }
+
+    private static bool IsDebugEnabled(HttpRequest request)
+    {
+        if (request.Query.TryGetValue("debug", out var debugValue))
+        {
+            if (IsTruthy(debugValue.ToString()))
+            {
+                return true;
+            }
+        }
+
+        if (request.Headers.TryGetValue("X-Debug", out var headerValue))
+        {
+            if (IsTruthy(headerValue.ToString()))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsTruthy(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Equals("1", StringComparison.OrdinalIgnoreCase)
+               || value.Equals("true", StringComparison.OrdinalIgnoreCase)
+               || value.Equals("yes", StringComparison.OrdinalIgnoreCase);
     }
 }

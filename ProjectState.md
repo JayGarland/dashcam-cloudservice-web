@@ -3,7 +3,7 @@
 ## Current Slice Status
 - Completed slices: 1, 2, 3, 4A–4D, 5A, 5B, 5C ✅
 - Patch: Hybrid JWT Validation ✅ (Auth patch)
-- Pending slices: 5D
+- Pending slices: 5D (QA + falsification validation)
 
 ## Repo Structure (Focused Snapshot)
 (Tree command unavailable; snapshot derived from `find` with exclusions.)
@@ -140,7 +140,8 @@ public async Task<VerificationResult> VerifyAsync(
     Stream videoStream,
     string sessionId,
     VerifyClaimMetadata? metadataOverride,
-    CancellationToken ct)
+    CancellationToken ct,
+    bool debugEnabled = false)
 ```
 
 Verify request/DTOs (`services/validator-api/Models/VerifyClaimModels.cs`):
@@ -181,6 +182,22 @@ public class VerifyClaimRequest
 
 ## Important Notes / Expected Behavior
 - Sampling interval is taken from the capture session as the single source of truth; the validator portal no longer exposes an interval override by default. Using a different interval reduces match ratio and produces missing spans, so metadata overrides are ignored.
+
+## Slice 5D: Demo + Falsification + Debug
+- Debug toggle: `POST /api/claims/verify?debug=1` or header `X-Debug: 1` returns debug metrics in the response and logs them.
+- Debug interpretation:
+  - Case A: candidateCountInWindow == 0 for most refs → timestamp/PTS drift.
+  - Case B: candidateCountInWindow > 0 but bestMinDistance > threshold → visual/hash mismatch.
+  - Case C: extractedFrameCount == 0 or elapsed range nonsense → extraction/PTS parse issue.
+- Falsification commands (from `docs/falsification-matrix.md`):
+```bash
+ffmpeg -i input.webm -c:v libx264 -crf 23 -preset veryfast -pix_fmt yuv420p -an reencode.mp4
+ffmpeg -i input.webm -c copy remux.mkv
+ffmpeg -i input.webm -filter_complex \"[0:v]trim=0:8,setpts=PTS-STARTPTS[v0];[0:v]trim=14,setpts=PTS-STARTPTS[v1];[v0][v1]concat=n=2:v=1:a=0\" -an trimmed.webm
+ffmpeg -i input.webm -vf fps=25 -an fps25.webm
+ffmpeg -i input.webm -filter:v \"setpts=0.9*PTS\" -an speedup.webm
+```
+- Current observation: only the original WebM yields match ratio ~1.00; re-encodes/variants yield 0.00. Use debug metrics to determine whether failure is Case A, B, or C.
 
 ## Auth Implementation Details (Hybrid JWT Validation)
 - Issuers accepted: `{BaseUrl}/auth/v1`, `{BaseUrl}`, and legacy `supabase`.

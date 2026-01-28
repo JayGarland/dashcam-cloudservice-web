@@ -19,4 +19,27 @@ export interface VerificationResult {
   maxDistance: number;
   missingSpans: MissingSpan[];
   notes: string[];
+  debug?: VerificationDebugMetrics;
+}
+
+export interface VerificationDebugMetrics {
+  sessionId: string;
+  sessionSamplingIntervalMs: number;
+  toleranceMs: number;
+  threshold: number;
+  referenceHashCount: number;
+  extractedFrameCount: number;
+  extractedElapsedMsRange?: DebugElapsedMsRange;
+  matcherWindowStats: MatcherWindowStat[];
+}
+
+export interface DebugElapsedMsRange {
+  minElapsedMs: number;
+  maxElapsedMs: number;
+}
+
+export interface MatcherWindowStat {
+  refElapsedMs: number;
+  candidateCountInWindow: number;
+  bestMinDistance: number | null;
 }

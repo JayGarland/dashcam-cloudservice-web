@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using ValidatorApi.Models;
 
 namespace ValidatorApi.Services;
@@ -16,21 +17,28 @@ public class VerificationService
     public const int DefaultDistanceThreshold = 5;
     public const double VerifiedMatchRatio = 0.90;
     public const double SuspiciousMatchRatio = 0.80;
+    private const int DebugSampleCount = 5;
 
     private readonly ISupabaseHashStore _store;
     private readonly IVideoFrameExtractor _extractor;
+    private readonly ILogger<VerificationService> _logger;
 
-    public VerificationService(ISupabaseHashStore store, IVideoFrameExtractor extractor)
+    public VerificationService(
+        ISupabaseHashStore store,
+        IVideoFrameExtractor extractor,
+        ILogger<VerificationService> logger)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _extractor = extractor ?? throw new ArgumentNullException(nameof(extractor));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     public async Task<VerificationResult> VerifyAsync(
         Stream videoStream,
         string sessionId,
         VerifyClaimMetadata? metadataOverride,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool debugEnabled = false)
     {
         if (videoStream is null)
         {
@@ -115,6 +123,19 @@ public class VerificationService
             });
         }
 
+        VerificationDebugMetrics? debugMetrics = null;
+        if (debugEnabled)
+        {
+            debugMetrics = BuildDebugMetrics(
+                normalizedSessionId,
+                samplingIntervalMs,
+                toleranceMs,
+                orderedReference,
+                candidates,
+                frameList);
+            _logger.LogInformation("Verification debug metrics for {SessionId}: {@Metrics}", normalizedSessionId, debugMetrics);
+        }
+
         var matcher = new HashMatcher(DefaultDistanceThreshold, toleranceMs);
         var (matched, avgDist, maxDist, missingSpans) = matcher.Match(orderedReference, candidates, intervalMs);
 
@@ -157,7 +178,89 @@ public class VerificationService
             AvgDistance = avgDist,
             MaxDistance = maxDist,
             MissingSpans = missingSpans,
-            Notes = notes
+            Notes = notes,
+            Debug = debugMetrics
         };
+    }
+
+    private static VerificationDebugMetrics BuildDebugMetrics(
+        string sessionId,
+        int sessionSamplingIntervalMs,
+        int toleranceMs,
+        IReadOnlyList<FrameHashRecord> reference,
+        IReadOnlyList<FrameHashRecord> candidates,
+        IReadOnlyList<ExtractedFrame> frames)
+    {
+        DebugElapsedMsRange? elapsedRange = null;
+        if (frames.Count > 0)
+        {
+            var minElapsed = frames.Min(frame => frame.ElapsedMs);
+            var maxElapsed = frames.Max(frame => frame.ElapsedMs);
+            elapsedRange = new DebugElapsedMsRange
+            {
+                MinElapsedMs = minElapsed,
+                MaxElapsedMs = maxElapsed
+            };
+        }
+
+        return new VerificationDebugMetrics
+        {
+            SessionId = sessionId,
+            SessionSamplingIntervalMs = sessionSamplingIntervalMs,
+            ToleranceMs = toleranceMs,
+            Threshold = DefaultDistanceThreshold,
+            ReferenceHashCount = reference.Count,
+            ExtractedFrameCount = frames.Count,
+            ExtractedElapsedMsRange = elapsedRange,
+            MatcherWindowStats = BuildMatcherWindowStats(reference, candidates, toleranceMs, DebugSampleCount)
+        };
+    }
+
+    private static List<MatcherWindowStat> BuildMatcherWindowStats(
+        IReadOnlyList<FrameHashRecord> reference,
+        IReadOnlyList<FrameHashRecord> candidates,
+        int toleranceMs,
+        int sampleCount)
+    {
+        var stats = new List<MatcherWindowStat>();
+        if (reference.Count == 0 || sampleCount <= 0)
+        {
+            return stats;
+        }
+
+        var orderedReference = reference.OrderBy(sample => sample.ElapsedMs).ToList();
+        var maxSamples = Math.Min(sampleCount, orderedReference.Count);
+
+        for (var i = 0; i < maxSamples; i += 1)
+        {
+            var sample = orderedReference[i];
+            var lowerBound = sample.SampleTimestampEpochMs - toleranceMs;
+            var upperBound = sample.SampleTimestampEpochMs + toleranceMs;
+
+            var candidateCount = 0;
+            int? minDist = null;
+
+            foreach (var candidate in candidates)
+            {
+                var timestamp = candidate.SampleTimestampEpochMs;
+                if (timestamp < lowerBound || timestamp > upperBound)
+                {
+                    continue;
+                }
+
+                candidateCount += 1;
+                var dist = HammingDistance.BetweenHex64(sample.HashHex, candidate.HashHex);
+                minDist = minDist.HasValue ? Math.Min(minDist.Value, dist) : dist;
+            }
+
+            stats.Add(new MatcherWindowStat
+            {
+                RefElapsedMs = sample.ElapsedMs,
+                CandidateCountInWindow = candidateCount,
+                BestMinDistance = minDist
+            });
+        }
+
+        return stats;
     }
 }

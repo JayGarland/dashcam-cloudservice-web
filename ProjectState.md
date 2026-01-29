@@ -6,6 +6,16 @@
 - Pending slices: none
 - Plan v3: 5A ✅, 5B ✅, 5C ✅, 5D ✅
 
+## Mobile Hashing Patch
+- Mobile Hashing Patch: use intrinsic video dimensions for hashing; preview crop no longer affects hashes.
+
+## Capture/Verify Parity Patch
+- Capture-client now records from the same MediaStream used for hashing; no secondary `getUserMedia` path.
+- Added debug bundle at session start: track settings, intrinsic video size, recorder mimeType, stream parity.
+- Validator-api debug note now includes first extracted frame size in Notes when debug is enabled.
+- Manual checklist: confirm stream parity log on mobile, verify same-session matchRatio > 0, compare intrinsic size vs extracted frame size note.
+- Evidence (mobile): session `fb3de6c0-f324-4f83-8667-253b7b141c2b` matched 19/26 with matchRatio 0.73; extracted frame size (first) 480x640; no missing spans.
+
 ## Repo Structure (Focused Snapshot)
 (Tree command unavailable; snapshot derived from `find` with exclusions.)
 

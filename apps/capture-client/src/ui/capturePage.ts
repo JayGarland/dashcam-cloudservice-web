@@ -1,6 +1,6 @@
 import { DEFAULT_ALGO_VERSION, DEFAULT_INTERVAL_MS } from "../constants";
 import { BrowserCameraFrameSource } from "../capture/frameSource";
-import { LocalRecorder } from "../capture/localRecorder";
+import { LocalRecorder, pickSupportedMimeType } from "../capture/localRecorder";
 import { Sampler } from "../capture/sampler";
 import { InMemoryHashQueue } from "../storage/hashQueue";
 import type { HashQueue } from "../storage/hashQueue";
@@ -290,6 +290,7 @@ export function initCapturePage(root: HTMLElement): void {
   let localRecorder: LocalRecorder | null = null;
   let recordingActive = false;
   let recordingDownloadUrl: string | null = null;
+  let sessionDebugLogged = false;
 
   const baseQueue = new InMemoryHashQueue();
   let uploader: Uploader | null = null;
@@ -337,6 +338,51 @@ export function initCapturePage(root: HTMLElement): void {
     const line = `[${formatTime()}] ${message}`;
     console.log(line);
     logEl.textContent = [line, logEl.textContent].filter(Boolean).join("\n");
+  }
+
+  function logSessionDebug(
+    hashingStream: MediaStream,
+    recordingStream: MediaStream,
+    recorderMimeType: string
+  ): void {
+    if (sessionDebugLogged) {
+      return;
+    }
+    sessionDebugLogged = true;
+    const track = hashingStream.getVideoTracks()[0];
+    const settings = track?.getSettings?.() ?? {};
+    const trackSettings = {
+      width: settings.width,
+      height: settings.height,
+      frameRate: settings.frameRate,
+      facingMode: settings.facingMode,
+    };
+    const videoWidth = camera?.getVideoElement().videoWidth ?? 0;
+    const videoHeight = camera?.getVideoElement().videoHeight ?? 0;
+    const sameStream = recordingStream === hashingStream;
+    console.group("[Debug(session-start)]");
+    console.log(
+      "[Debug(session-start)] track settings:",
+      JSON.stringify(trackSettings)
+    );
+    console.log(
+      "[Debug(session-start)] video intrinsic:",
+      `${videoWidth}x${videoHeight}`
+    );
+    console.log("[Debug(session-start)] recorder mimeType:", recorderMimeType);
+    console.log(
+      "[Debug(session-start)] recording stream === hashing stream:",
+      sameStream
+    );
+    if (!sameStream) {
+      const hashTrackId = hashingStream.getVideoTracks()[0]?.id ?? "unknown";
+      const recordTrackId = recordingStream.getVideoTracks()[0]?.id ?? "unknown";
+      console.log(
+        "[Debug(session-start)] hash/record track IDs:",
+        `${hashTrackId} / ${recordTrackId}`
+      );
+    }
+    console.groupEnd();
   }
 
   function updateOnlineIndicator(): void {
@@ -516,6 +562,7 @@ export function initCapturePage(root: HTMLElement): void {
     };
     uploadedCount = 0;
     lastUploadedIndex = null;
+    sessionDebugLogged = false;
 
     supabaseApi = null;
     try {
@@ -524,6 +571,13 @@ export function initCapturePage(root: HTMLElement): void {
       log(`insertSession ok: ${activeSession.sessionId}`);
     } catch (error) {
       log(`insertSession failed: ${String(error)}`);
+    }
+
+    const hashingStream = camera.getVideoElement().srcObject;
+    if (!(hashingStream instanceof MediaStream)) {
+      const error = new Error("Camera stream not started.");
+      log(error.message);
+      throw error;
     }
 
     sampler = new Sampler(
@@ -538,27 +592,27 @@ export function initCapturePage(root: HTMLElement): void {
     sampler.start();
     log(`Sampler started (interval ${intervalMs}ms).`);
 
+    let recorderMimeType =
+      recordLocalToggle.checked ? pickSupportedMimeType() ?? "unsupported" : "disabled";
+
     if (recordLocalToggle.checked) {
-      const stream = camera.getVideoElement().srcObject;
-      if (!(stream instanceof MediaStream)) {
-        log("Recording could not start: camera stream unavailable.");
-        setRecordingWarning("Recording unavailable: camera stream missing.");
-      } else {
-        try {
-          localRecorder = new LocalRecorder(stream);
-          localRecorder.start();
-          recordingActive = true;
-          log("Local recording started.");
-        } catch (error) {
-          log(`Recording start failed: ${String(error)}`);
-          setRecordingWarning(
-            "Recording failed to start. Session will continue without video."
-          );
-          localRecorder = null;
-          recordingActive = false;
-        }
+      try {
+        localRecorder = new LocalRecorder(hashingStream);
+        localRecorder.start();
+        recordingActive = true;
+        recorderMimeType = localRecorder.activeMimeType ?? recorderMimeType;
+        log("Local recording started.");
+      } catch (error) {
+        log(`Recording start failed: ${String(error)}`);
+        setRecordingWarning(
+          "Recording failed to start. Session will continue without video."
+        );
+        localRecorder = null;
+        recordingActive = false;
       }
     }
+
+    logSessionDebug(hashingStream, hashingStream, recorderMimeType);
 
     updateStatus();
     void refreshPendingCount();
@@ -591,6 +645,10 @@ export function initCapturePage(root: HTMLElement): void {
       } finally {
         localRecorder = null;
       }
+    }
+    if (camera) {
+      camera.stop();
+      camera = null;
     }
     updateStatus();
   });

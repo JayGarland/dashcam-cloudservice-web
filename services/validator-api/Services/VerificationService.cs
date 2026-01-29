@@ -151,6 +151,11 @@ public class VerificationService
         {
             notes.Add("Too few frames extracted");
         }
+        if (debugEnabled && frameList.Count > 0)
+        {
+            var firstFrame = frameList[0];
+            notes.Add($"Extracted frame size (first): {firstFrame.Width}x{firstFrame.Height}");
+        }
 
         var verdict = Verdict.Inconclusive;
         if (!tooFewFrames)

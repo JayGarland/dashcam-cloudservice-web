@@ -22,9 +22,7 @@ export class BrowserCameraFrameSource implements FrameSource {
   private readonly context: CanvasRenderingContext2D;
   private readonly constraints: MediaStreamConstraints;
   private stream: MediaStream | undefined;
-  private ready: Promise<void> | undefined;
-  private resolveReady: (() => void) | undefined;
-  private rejectReady: ((error: unknown) => void) | undefined;
+  private ready: Promise<void> | null = null;
   private width = 0;
   private height = 0;
 
@@ -69,31 +67,14 @@ export class BrowserCameraFrameSource implements FrameSource {
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("Camera access is not supported in this browser.");
     }
-    this.ready = new Promise<void>((resolve, reject) => {
-      this.resolveReady = resolve;
-      this.rejectReady = reject;
-    });
-
     try {
       this.stream = await navigator.mediaDevices.getUserMedia(this.constraints);
       this.video.srcObject = this.stream;
       await this.video.play().catch(() => undefined);
-
-      if (this.video.readyState >= 1 && this.video.videoWidth > 0) {
-        this.finalizeDimensions();
-      } else {
-        this.video.addEventListener(
-          "loadedmetadata",
-          () => {
-            this.finalizeDimensions();
-          },
-          { once: true }
-        );
-      }
+      this.ready = this.waitForIntrinsicDimensions();
       await this.ready;
     } catch (error) {
-      this.rejectReady?.(error);
-      this.ready = undefined;
+      this.ready = null;
       throw error;
     }
   }
@@ -107,6 +88,9 @@ export class BrowserCameraFrameSource implements FrameSource {
     }
     this.stream = undefined;
     this.video.srcObject = null;
+    this.ready = null;
+    this.width = 0;
+    this.height = 0;
   }
 
   getVideoElement(): HTMLVideoElement {
@@ -120,11 +104,25 @@ export class BrowserCameraFrameSource implements FrameSource {
     if (this.ready) {
       await this.ready;
     }
-    if (!this.width || !this.height) {
+    const intrinsicWidth = this.video.videoWidth;
+    const intrinsicHeight = this.video.videoHeight;
+    if (!intrinsicWidth || !intrinsicHeight) {
       throw new Error("Camera video dimensions are not available yet.");
     }
-    this.context.drawImage(this.video, 0, 0, this.width, this.height);
-    const imageData = this.context.getImageData(0, 0, this.width, this.height);
+    this.ensureCanvasSize(intrinsicWidth, intrinsicHeight);
+    this.context.drawImage(
+      this.video,
+      0,
+      0,
+      intrinsicWidth,
+      intrinsicHeight
+    );
+    const imageData = this.context.getImageData(
+      0,
+      0,
+      intrinsicWidth,
+      intrinsicHeight
+    );
     return {
       rgba: imageData.data,
       width: imageData.width,
@@ -132,16 +130,108 @@ export class BrowserCameraFrameSource implements FrameSource {
     };
   }
 
-  private finalizeDimensions(): void {
-    this.width = this.video.videoWidth;
-    this.height = this.video.videoHeight;
-    if (!this.width || !this.height) {
-      this.width = 640;
-      this.height = 480;
+  getDebugFrameSizes(): {
+    intrinsicWidth: number;
+    intrinsicHeight: number;
+    displayWidth: number;
+    displayHeight: number;
+    hashWidth: number;
+    hashHeight: number;
+  } {
+    return {
+      intrinsicWidth: this.video.videoWidth,
+      intrinsicHeight: this.video.videoHeight,
+      displayWidth: this.video.clientWidth,
+      displayHeight: this.video.clientHeight,
+      hashWidth: this.canvas.width,
+      hashHeight: this.canvas.height,
+    };
+  }
+
+  private ensureCanvasSize(width: number, height: number): void {
+    if (this.width === width && this.height === height) {
+      return;
     }
-    this.canvas.width = this.width;
-    this.canvas.height = this.height;
-    this.resolveReady?.();
+    this.width = width;
+    this.height = height;
+    this.canvas.width = width;
+    this.canvas.height = height;
+  }
+
+  private waitForIntrinsicDimensions(): Promise<void> {
+    const initialWidth = this.video.videoWidth;
+    const initialHeight = this.video.videoHeight;
+    if (initialWidth > 0 && initialHeight > 0) {
+      this.ensureCanvasSize(initialWidth, initialHeight);
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let rafId = 0;
+      let frameCallbackId: number | null = null;
+      const videoWithCallback = this.video as HTMLVideoElement & {
+        requestVideoFrameCallback?: (callback: () => void) => number;
+        cancelVideoFrameCallback?: (handle: number) => void;
+      };
+
+      const cleanup = (): void => {
+        this.video.removeEventListener("loadedmetadata", handleReadyCheck);
+        this.video.removeEventListener("loadeddata", handleReadyCheck);
+        this.video.removeEventListener("resize", handleReadyCheck);
+        this.video.removeEventListener("error", handleError);
+        if (rafId) {
+          cancelAnimationFrame(rafId);
+          rafId = 0;
+        }
+        if (frameCallbackId !== null && videoWithCallback.cancelVideoFrameCallback) {
+          videoWithCallback.cancelVideoFrameCallback(frameCallbackId);
+        }
+      };
+
+      const handleReadyCheck = (): void => {
+        if (settled) {
+          return;
+        }
+        const width = this.video.videoWidth;
+        const height = this.video.videoHeight;
+        if (width > 0 && height > 0) {
+          settled = true;
+          cleanup();
+          this.ensureCanvasSize(width, height);
+          resolve();
+          return;
+        }
+        if (!rafId) {
+          rafId = requestAnimationFrame(() => {
+            rafId = 0;
+            handleReadyCheck();
+          });
+        }
+      };
+
+      const handleError = (): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        reject(new Error("Camera video dimensions are not available yet."));
+      };
+
+      this.video.addEventListener("loadedmetadata", handleReadyCheck);
+      this.video.addEventListener("loadeddata", handleReadyCheck);
+      this.video.addEventListener("resize", handleReadyCheck);
+      this.video.addEventListener("error", handleError, { once: true });
+
+      if (videoWithCallback.requestVideoFrameCallback) {
+        frameCallbackId = videoWithCallback.requestVideoFrameCallback(() => {
+          handleReadyCheck();
+        });
+      }
+
+      handleReadyCheck();
+    });
   }
 }
 

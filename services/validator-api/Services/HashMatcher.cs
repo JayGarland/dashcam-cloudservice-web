@@ -45,7 +45,7 @@ public class HashMatcher
         }
 
         var orderedReference = reference.OrderBy(r => r.ElapsedMs).ToList();
-        var orderedCandidates = candidates.OrderBy(c => c.SampleTimestampEpochMs).ToList();
+        var orderedCandidates = candidates.OrderBy(c => c.ElapsedMs).ToList();
 
         var matched = 0;
         var maxDist = 0;
@@ -59,19 +59,19 @@ public class HashMatcher
 
         foreach (var sample in orderedReference)
         {
-            var lowerBound = sample.SampleTimestampEpochMs - _toleranceMs;
-            var upperBound = sample.SampleTimestampEpochMs + _toleranceMs;
+            var lowerBound = sample.ElapsedMs - _toleranceMs;
+            var upperBound = sample.ElapsedMs + _toleranceMs;
 
-            while (candidateStart < orderedCandidates.Count &&
-                   orderedCandidates[candidateStart].SampleTimestampEpochMs < lowerBound)
+                 while (candidateStart < orderedCandidates.Count &&
+                     orderedCandidates[candidateStart].ElapsedMs < lowerBound)
             {
                 candidateStart += 1;
             }
 
             int? minDist = null;
             var scanIndex = candidateStart;
-            while (scanIndex < orderedCandidates.Count &&
-                   orderedCandidates[scanIndex].SampleTimestampEpochMs <= upperBound)
+                 while (scanIndex < orderedCandidates.Count &&
+                     orderedCandidates[scanIndex].ElapsedMs <= upperBound)
             {
                 var dist = HammingDistance.BetweenHex64(sample.HashHex, orderedCandidates[scanIndex].HashHex);
                 minDist = minDist.HasValue ? Math.Min(minDist.Value, dist) : dist;

@@ -142,6 +142,18 @@ public class VerificationService
         var expectedSamples = orderedReference.Count;
         var matchRatio = expectedSamples > 0 ? matched / (double)expectedSamples : 0d;
 
+        if (debugEnabled && debugMetrics is not null && matchRatio < 0.2 && orderedReference.Count > 0 && candidates.Count > 0)
+        {
+            var sweep = RunDeltaSweep(orderedReference, candidates, toleranceMs, DefaultDistanceThreshold);
+            debugMetrics.BestDeltaMs = sweep.BestDeltaMs;
+            debugMetrics.BestMatchedSamples = sweep.BestMatched;
+            _logger.LogInformation(
+                "Verification delta sweep for {SessionId}: bestDeltaMs={BestDeltaMs} bestMatched={BestMatched}",
+                normalizedSessionId,
+                sweep.BestDeltaMs,
+                sweep.BestMatched);
+        }
+
         var notes = new List<string>();
         if (expectedSamples == 0)
         {
@@ -239,16 +251,16 @@ public class VerificationService
         for (var i = 0; i < maxSamples; i += 1)
         {
             var sample = orderedReference[i];
-            var lowerBound = sample.SampleTimestampEpochMs - toleranceMs;
-            var upperBound = sample.SampleTimestampEpochMs + toleranceMs;
+            var lowerBound = sample.ElapsedMs - toleranceMs;
+            var upperBound = sample.ElapsedMs + toleranceMs;
 
             var candidateCount = 0;
             int? minDist = null;
 
             foreach (var candidate in candidates)
             {
-                var timestamp = candidate.SampleTimestampEpochMs;
-                if (timestamp < lowerBound || timestamp > upperBound)
+                var elapsed = candidate.ElapsedMs;
+                if (elapsed < lowerBound || elapsed > upperBound)
                 {
                     continue;
                 }
@@ -267,5 +279,76 @@ public class VerificationService
         }
 
         return stats;
+    }
+
+    private readonly record struct DeltaSweepResult(int BestDeltaMs, int BestMatched);
+
+    private static DeltaSweepResult RunDeltaSweep(
+        IReadOnlyList<FrameHashRecord> reference,
+        IReadOnlyList<FrameHashRecord> candidates,
+        int toleranceMs,
+        int threshold)
+    {
+        const int minDelta = -2000;
+        const int maxDelta = 2000;
+        const int step = 50;
+
+        var bestDelta = 0;
+        var bestMatched = -1;
+
+        for (var delta = minDelta; delta <= maxDelta; delta += step)
+        {
+            var matched = CountMatchesWithDelta(reference, candidates, toleranceMs, threshold, delta);
+            if (matched > bestMatched)
+            {
+                bestMatched = matched;
+                bestDelta = delta;
+            }
+        }
+
+        return new DeltaSweepResult(bestDelta, bestMatched);
+    }
+
+    private static int CountMatchesWithDelta(
+        IReadOnlyList<FrameHashRecord> reference,
+        IReadOnlyList<FrameHashRecord> candidates,
+        int toleranceMs,
+        int threshold,
+        int deltaMs)
+    {
+        var orderedReference = reference.OrderBy(r => r.ElapsedMs).ToList();
+        var orderedCandidates = candidates.OrderBy(c => c.ElapsedMs).ToList();
+
+        var matched = 0;
+        var candidateStart = 0;
+
+        foreach (var sample in orderedReference)
+        {
+            var lowerBound = sample.ElapsedMs - toleranceMs;
+            var upperBound = sample.ElapsedMs + toleranceMs;
+
+            while (candidateStart < orderedCandidates.Count &&
+                   orderedCandidates[candidateStart].ElapsedMs + deltaMs < lowerBound)
+            {
+                candidateStart += 1;
+            }
+
+            int? minDist = null;
+            var scanIndex = candidateStart;
+            while (scanIndex < orderedCandidates.Count &&
+                   orderedCandidates[scanIndex].ElapsedMs + deltaMs <= upperBound)
+            {
+                var dist = HammingDistance.BetweenHex64(sample.HashHex, orderedCandidates[scanIndex].HashHex);
+                minDist = minDist.HasValue ? Math.Min(minDist.Value, dist) : dist;
+                scanIndex += 1;
+            }
+
+            if (minDist.HasValue && minDist.Value <= threshold)
+            {
+                matched += 1;
+            }
+        }
+
+        return matched;
     }
 }

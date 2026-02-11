@@ -44,6 +44,8 @@ public class VerificationDebugMetrics
     public int ReferenceHashCount { get; set; }
     public int ExtractedFrameCount { get; set; }
     public DebugElapsedMsRange? ExtractedElapsedMsRange { get; set; }
+    public int? BestDeltaMs { get; set; }
+    public int? BestMatchedSamples { get; set; }
     public List<MatcherWindowStat> MatcherWindowStats { get; set; } = new();
 }
 

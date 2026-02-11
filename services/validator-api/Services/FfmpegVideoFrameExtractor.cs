@@ -11,7 +11,7 @@ using SixLabors.ImageSharp.PixelFormats;
 
 namespace ValidatorApi.Services;
 
-public sealed class FfmpegVideoFrameExtractor : IVideoFrameExtractor
+public sealed class FfmpegVideoFrameExtractor : IVideoFrameExtractor, IVideoMetadataReader
 {
     private const string FramePattern = "frame_%06d.png";
     private const string PtsTimeToken = "pts_time:";
@@ -110,10 +110,144 @@ public sealed class FfmpegVideoFrameExtractor : IVideoFrameExtractor
         }
     }
 
+    public async Task<int?> GetRotationDegreesAsync(Stream videoStream, CancellationToken ct)
+    {
+        if (videoStream is null)
+        {
+            throw new ArgumentNullException(nameof(videoStream));
+        }
+
+        var tempDir = Path.Combine(Path.GetTempPath(), $"dashcam-probe-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var inputPath = Path.Combine(tempDir, "input.bin");
+            await using (var fileStream = new FileStream(inputPath, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                await videoStream.CopyToAsync(fileStream, ct).ConfigureAwait(false);
+            }
+
+            var args = BuildProbeArguments(inputPath);
+            var result = await _processRunner
+                .RunAsync(new ProcessRunRequest(_options.ProbePath, args, tempDir), ct)
+                .ConfigureAwait(false);
+
+            if (result.ExitCode != 0)
+            {
+                return null;
+            }
+
+            return ParseRotationDegrees(result.StdOut);
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(tempDir, true);
+            }
+            catch
+            {
+                // Best-effort cleanup; ignore failures.
+            }
+        }
+    }
+
     private static string BuildArguments(string inputPath, string outputPattern, double fps)
     {
         var fpsValue = fps.ToString(CultureInfo.InvariantCulture);
         return $"-hide_banner -loglevel info -i \"{inputPath}\" -vf \"fps={fpsValue},showinfo\" -vsync vfr \"{outputPattern}\"";
+    }
+
+    private static string BuildProbeArguments(string inputPath)
+    {
+        return $"-v error -select_streams v:0 -show_entries stream_tags=rotate,side_data=rotation -of json \"{inputPath}\"";
+    }
+
+    private static int? ParseRotationDegrees(string stdout)
+    {
+        if (string.IsNullOrWhiteSpace(stdout))
+        {
+            return null;
+        }
+
+        using var doc = System.Text.Json.JsonDocument.Parse(stdout);
+        if (!doc.RootElement.TryGetProperty("streams", out var streams) || streams.ValueKind != System.Text.Json.JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        foreach (var stream in streams.EnumerateArray())
+        {
+            if (TryReadRotation(stream, "side_data") is int sideDataRotation)
+            {
+                return NormalizeRotation(sideDataRotation);
+            }
+            if (TryReadRotation(stream, "tags") is int tagRotation)
+            {
+                return NormalizeRotation(tagRotation);
+            }
+        }
+
+        return null;
+    }
+
+    private static int? TryReadRotation(System.Text.Json.JsonElement stream, string propertyName)
+    {
+        if (!stream.TryGetProperty(propertyName, out var container))
+        {
+            return null;
+        }
+
+        if (container.ValueKind == System.Text.Json.JsonValueKind.Object)
+        {
+            if (container.TryGetProperty("rotation", out var rotationValue))
+            {
+                return ParseRotationValue(rotationValue);
+            }
+        }
+
+        if (container.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var entry in container.EnumerateArray())
+            {
+                if (entry.TryGetProperty("rotation", out var rotationValue))
+                {
+                    return ParseRotationValue(rotationValue);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static int? ParseRotationValue(System.Text.Json.JsonElement rotationValue)
+    {
+        if (rotationValue.ValueKind == System.Text.Json.JsonValueKind.Number && rotationValue.TryGetInt32(out var rotationInt))
+        {
+            return rotationInt;
+        }
+
+        if (rotationValue.ValueKind == System.Text.Json.JsonValueKind.String && int.TryParse(rotationValue.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var rotationParsed))
+        {
+            return rotationParsed;
+        }
+
+        return null;
+    }
+
+    private static int NormalizeRotation(int rotation)
+    {
+        var normalized = rotation % 360;
+        if (normalized < 0)
+        {
+            normalized += 360;
+        }
+        return normalized;
     }
 
     private static IReadOnlyList<double> ParsePtsTimes(string stderr)

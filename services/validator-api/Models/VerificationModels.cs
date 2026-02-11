@@ -46,6 +46,10 @@ public class VerificationDebugMetrics
     public DebugElapsedMsRange? ExtractedElapsedMsRange { get; set; }
     public int? BestDeltaMs { get; set; }
     public int? BestMatchedSamples { get; set; }
+    public int? RotationDegrees { get; set; }
+    public int CountNoCandidates { get; set; }
+    public int CountTooDissimilar { get; set; }
+    public BestDistanceHistogram BestDistanceHistogram { get; set; } = new();
     public List<MatcherWindowStat> MatcherWindowStats { get; set; } = new();
 }
 
@@ -60,4 +64,14 @@ public class MatcherWindowStat
     public int RefElapsedMs { get; set; }
     public int CandidateCountInWindow { get; set; }
     public int? BestMinDistance { get; set; }
+    public int? SecondBestDistance { get; set; }
+    public int? BestCandidateElapsedMs { get; set; }
+}
+
+public class BestDistanceHistogram
+{
+    public int Bucket0To5 { get; set; }
+    public int Bucket6To10 { get; set; }
+    public int Bucket11To20 { get; set; }
+    public int Bucket21To64 { get; set; }
 }

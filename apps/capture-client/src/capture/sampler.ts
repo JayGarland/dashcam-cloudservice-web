@@ -23,6 +23,7 @@ export class Sampler {
   private intervalId: ReturnType<typeof setInterval> | undefined;
   private sampleIndex = 0;
   private inFlight = false;
+  private baseMediaTimeSec: number | undefined;
 
   constructor(session: CaptureSession, config: SamplerConfig, deps: SamplerDeps) {
     this.session = session;
@@ -68,7 +69,16 @@ export class Sampler {
         frame.width,
         frame.height
       );
-      const elapsedMs = this.sampleIndex * this.intervalMs;
+      if (!Number.isFinite(frame.mediaTimeSec)) {
+        return;
+      }
+      if (this.baseMediaTimeSec === undefined) {
+        this.baseMediaTimeSec = frame.mediaTimeSec;
+      }
+      const elapsedMs = Math.max(
+        0,
+        Math.round((frame.mediaTimeSec - this.baseMediaTimeSec) * 1000)
+      );
       const sampleTimestampEpochMs =
         this.session.deviceClockStartEpochMs + elapsedMs;
 
@@ -82,6 +92,8 @@ export class Sampler {
         algoVersion: this.session.algoVersion,
         createdAtEpochMs: this.now(),
         uploadState: "pending",
+        mediaTimeSec: frame.mediaTimeSec,
+        elapsedSource: frame.elapsedSource,
       };
 
       await this.queue.enqueue(record);

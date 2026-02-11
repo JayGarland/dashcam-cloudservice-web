@@ -96,7 +96,22 @@ public class VerificationService
         var reference = await _store.GetFrameHashesAsync(normalizedSessionId, ct) ?? Array.Empty<FrameHashRecord>();
         var orderedReference = reference.OrderBy(r => r.ElapsedMs).ToList();
 
-        var frames = await _extractor.ExtractFramesAsync(videoStream, intervalMs, ct) ?? Array.Empty<ExtractedFrame>();
+        int? rotationDegrees = null;
+        Stream extractionStream = videoStream;
+        MemoryStream? extractionBufferStream = null;
+        byte[]? bufferedVideo = null;
+
+        if (debugEnabled && _extractor is IVideoMetadataReader metadataReader)
+        {
+            bufferedVideo = await BufferVideoAsync(videoStream, ct).ConfigureAwait(false);
+            extractionBufferStream = new MemoryStream(bufferedVideo, writable: false);
+            extractionStream = extractionBufferStream;
+            await using var rotationStream = new MemoryStream(bufferedVideo, writable: false);
+            rotationDegrees = await metadataReader.GetRotationDegreesAsync(rotationStream, ct).ConfigureAwait(false);
+        }
+
+        var frames = await _extractor.ExtractFramesAsync(extractionStream, intervalMs, ct) ?? Array.Empty<ExtractedFrame>();
+        extractionBufferStream?.Dispose();
         var frameList = frames.ToList();
         var tooFewFrames = frameList.Count < 5;
 
@@ -130,6 +145,7 @@ public class VerificationService
                 normalizedSessionId,
                 samplingIntervalMs,
                 toleranceMs,
+                rotationDegrees,
                 orderedReference,
                 candidates,
                 frameList);
@@ -142,7 +158,7 @@ public class VerificationService
         var expectedSamples = orderedReference.Count;
         var matchRatio = expectedSamples > 0 ? matched / (double)expectedSamples : 0d;
 
-        if (debugEnabled && debugMetrics is not null && matchRatio < 0.2 && orderedReference.Count > 0 && candidates.Count > 0)
+        if (debugEnabled && debugMetrics is not null && matchRatio < 0.5 && orderedReference.Count > 0 && candidates.Count > 0)
         {
             var sweep = RunDeltaSweep(orderedReference, candidates, toleranceMs, DefaultDistanceThreshold);
             debugMetrics.BestDeltaMs = sweep.BestDeltaMs;
@@ -204,6 +220,7 @@ public class VerificationService
         string sessionId,
         int sessionSamplingIntervalMs,
         int toleranceMs,
+        int? rotationDegrees,
         IReadOnlyList<FrameHashRecord> reference,
         IReadOnlyList<FrameHashRecord> candidates,
         IReadOnlyList<ExtractedFrame> frames)
@@ -220,6 +237,9 @@ public class VerificationService
             };
         }
 
+        var diagnostics = BuildDistanceDiagnostics(reference, candidates, toleranceMs, DefaultDistanceThreshold);
+        var sampleStats = diagnostics.Stats.Take(DebugSampleCount).ToList();
+
         return new VerificationDebugMetrics
         {
             SessionId = sessionId,
@@ -229,33 +249,47 @@ public class VerificationService
             ReferenceHashCount = reference.Count,
             ExtractedFrameCount = frames.Count,
             ExtractedElapsedMsRange = elapsedRange,
-            MatcherWindowStats = BuildMatcherWindowStats(reference, candidates, toleranceMs, DebugSampleCount)
+            RotationDegrees = rotationDegrees,
+            CountNoCandidates = diagnostics.CountNoCandidates,
+            CountTooDissimilar = diagnostics.CountTooDissimilar,
+            BestDistanceHistogram = diagnostics.Histogram,
+            MatcherWindowStats = sampleStats
         };
     }
 
-    private static List<MatcherWindowStat> BuildMatcherWindowStats(
+    private readonly record struct DistanceDiagnostics(
+        List<MatcherWindowStat> Stats,
+        int CountNoCandidates,
+        int CountTooDissimilar,
+        BestDistanceHistogram Histogram);
+
+    private static DistanceDiagnostics BuildDistanceDiagnostics(
         IReadOnlyList<FrameHashRecord> reference,
         IReadOnlyList<FrameHashRecord> candidates,
         int toleranceMs,
-        int sampleCount)
+        int threshold)
     {
-        var stats = new List<MatcherWindowStat>();
-        if (reference.Count == 0 || sampleCount <= 0)
+        var stats = new List<MatcherWindowStat>(reference.Count);
+        var histogram = new BestDistanceHistogram();
+        var countNoCandidates = 0;
+        var countTooDissimilar = 0;
+
+        if (reference.Count == 0)
         {
-            return stats;
+            return new DistanceDiagnostics(stats, countNoCandidates, countTooDissimilar, histogram);
         }
 
         var orderedReference = reference.OrderBy(sample => sample.ElapsedMs).ToList();
-        var maxSamples = Math.Min(sampleCount, orderedReference.Count);
 
-        for (var i = 0; i < maxSamples; i += 1)
+        foreach (var sample in orderedReference)
         {
-            var sample = orderedReference[i];
             var lowerBound = sample.ElapsedMs - toleranceMs;
             var upperBound = sample.ElapsedMs + toleranceMs;
 
             var candidateCount = 0;
-            int? minDist = null;
+            int? bestDist = null;
+            int? secondBestDist = null;
+            int? bestCandidateElapsedMs = null;
 
             foreach (var candidate in candidates)
             {
@@ -267,18 +301,63 @@ public class VerificationService
 
                 candidateCount += 1;
                 var dist = HammingDistance.BetweenHex64(sample.HashHex, candidate.HashHex);
-                minDist = minDist.HasValue ? Math.Min(minDist.Value, dist) : dist;
+                if (!bestDist.HasValue || dist < bestDist.Value)
+                {
+                    secondBestDist = bestDist;
+                    bestDist = dist;
+                    bestCandidateElapsedMs = elapsed;
+                }
+                else if (!secondBestDist.HasValue || dist < secondBestDist.Value)
+                {
+                    secondBestDist = dist;
+                }
+            }
+
+            if (candidateCount == 0)
+            {
+                countNoCandidates += 1;
+            }
+            else if (bestDist.HasValue && bestDist.Value > threshold)
+            {
+                countTooDissimilar += 1;
+            }
+
+            if (bestDist.HasValue)
+            {
+                AddHistogramBucket(histogram, bestDist.Value);
             }
 
             stats.Add(new MatcherWindowStat
             {
                 RefElapsedMs = sample.ElapsedMs,
                 CandidateCountInWindow = candidateCount,
-                BestMinDistance = minDist
+                BestMinDistance = bestDist,
+                SecondBestDistance = secondBestDist,
+                BestCandidateElapsedMs = bestCandidateElapsedMs
             });
         }
 
-        return stats;
+        return new DistanceDiagnostics(stats, countNoCandidates, countTooDissimilar, histogram);
+    }
+
+    private static void AddHistogramBucket(BestDistanceHistogram histogram, int distance)
+    {
+        if (distance <= 5)
+        {
+            histogram.Bucket0To5 += 1;
+        }
+        else if (distance <= 10)
+        {
+            histogram.Bucket6To10 += 1;
+        }
+        else if (distance <= 20)
+        {
+            histogram.Bucket11To20 += 1;
+        }
+        else
+        {
+            histogram.Bucket21To64 += 1;
+        }
     }
 
     private readonly record struct DeltaSweepResult(int BestDeltaMs, int BestMatched);
@@ -350,5 +429,12 @@ public class VerificationService
         }
 
         return matched;
+    }
+
+    private static async Task<byte[]> BufferVideoAsync(Stream videoStream, CancellationToken ct)
+    {
+        await using var buffer = new MemoryStream();
+        await videoStream.CopyToAsync(buffer, ct).ConfigureAwait(false);
+        return buffer.ToArray();
     }
 }

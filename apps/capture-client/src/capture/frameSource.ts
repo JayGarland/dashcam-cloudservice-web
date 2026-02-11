@@ -2,6 +2,8 @@ export interface FrameData {
   rgba: Uint8ClampedArray;
   width: number;
   height: number;
+  mediaTimeSec?: number;
+  elapsedSource?: "rvfc" | "currentTime";
 }
 
 export interface FrameSource {
@@ -104,6 +106,9 @@ export class BrowserCameraFrameSource implements FrameSource {
     if (this.ready) {
       await this.ready;
     }
+    if (this.supportsRequestVideoFrameCallback()) {
+      return this.readFrameWithCallback();
+    }
     const intrinsicWidth = this.video.videoWidth;
     const intrinsicHeight = this.video.videoHeight;
     if (!intrinsicWidth || !intrinsicHeight) {
@@ -123,10 +128,13 @@ export class BrowserCameraFrameSource implements FrameSource {
       intrinsicWidth,
       intrinsicHeight
     );
+    const mediaTimeSec = this.video.currentTime;
     return {
       rgba: imageData.data,
       width: imageData.width,
       height: imageData.height,
+      mediaTimeSec,
+      elapsedSource: "currentTime",
     };
   }
 
@@ -233,6 +241,55 @@ export class BrowserCameraFrameSource implements FrameSource {
       handleReadyCheck();
     });
   }
+
+  private supportsRequestVideoFrameCallback(): boolean {
+    return typeof (this.video as HTMLVideoElement & { requestVideoFrameCallback?: unknown })
+      .requestVideoFrameCallback === "function";
+  }
+
+  private readFrameWithCallback(): Promise<FrameData> {
+    const videoWithCallback = this.video as HTMLVideoElement & {
+      requestVideoFrameCallback: (
+        callback: (now: number, metadata: { mediaTime?: number }) => void
+      ) => number;
+    };
+
+    return new Promise((resolve, reject) => {
+      videoWithCallback.requestVideoFrameCallback((_now, metadata) => {
+        try {
+          const intrinsicWidth = this.video.videoWidth;
+          const intrinsicHeight = this.video.videoHeight;
+          if (!intrinsicWidth || !intrinsicHeight) {
+            throw new Error("Camera video dimensions are not available yet.");
+          }
+          this.ensureCanvasSize(intrinsicWidth, intrinsicHeight);
+          this.context.drawImage(
+            this.video,
+            0,
+            0,
+            intrinsicWidth,
+            intrinsicHeight
+          );
+          const imageData = this.context.getImageData(
+            0,
+            0,
+            intrinsicWidth,
+            intrinsicHeight
+          );
+          const mediaTimeSec = metadata.mediaTime ?? this.video.currentTime;
+          resolve({
+            rgba: imageData.data,
+            width: imageData.width,
+            height: imageData.height,
+            mediaTimeSec,
+            elapsedSource: "rvfc",
+          });
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+  }
 }
 
 export function makeSolidColorFrameSource(
@@ -255,6 +312,8 @@ export function makeSolidColorFrameSource(
         rgba: data,
         width,
         height,
+        mediaTimeSec: 0,
+        elapsedSource: "currentTime",
       };
     },
   };

@@ -18,4 +18,6 @@ export interface FrameHashRecord {
   algoVersion: AlgoVersion;
   createdAtEpochMs: number;
   uploadState: "pending" | "uploaded";
+  mediaTimeSec?: number;
+  elapsedSource?: "rvfc" | "currentTime";
 }

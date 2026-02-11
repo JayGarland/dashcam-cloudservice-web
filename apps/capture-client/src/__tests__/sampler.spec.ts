@@ -3,7 +3,6 @@ import type { CaptureSession } from "../models";
 import { Sampler } from "../capture/sampler";
 import { InMemoryHashQueue } from "../storage/hashQueue";
 import type { FrameData, FrameSource } from "../capture/frameSource";
-import { makeSolidColorFrameSource } from "../capture/frameSource";
 
 function makeSession(): CaptureSession {
   return {
@@ -19,7 +18,7 @@ describe("Sampler", () => {
     vi.useFakeTimers();
     const session = makeSession();
     const queue = new InMemoryHashQueue();
-    const frameSource = makeSolidColorFrameSource(4, 4, [10, 20, 30, 255]);
+    const frameSource = makeMediaTimeFrameSource(4, 4, [10, 20, 30, 255], 0.5);
     let nowValue = 2_000_000;
     const sampler = new Sampler(
       session,
@@ -59,7 +58,7 @@ describe("Sampler", () => {
     vi.useFakeTimers();
     const session = makeSession();
     const queue = new InMemoryHashQueue();
-    const baseFrameSource = makeSolidColorFrameSource(2, 2, [0, 0, 0, 255]);
+    const baseFrameSource = makeMediaTimeFrameSource(2, 2, [0, 0, 0, 255], 0.5);
     const baseFrame = await baseFrameSource.readFrame();
 
     class FlakyFrameSource implements FrameSource {
@@ -70,7 +69,11 @@ describe("Sampler", () => {
         if (this.calls === 1) {
           throw new Error("boom");
         }
-        return baseFrame;
+        return {
+          ...baseFrame,
+          mediaTimeSec: this.calls * 0.5,
+          elapsedSource: "currentTime",
+        };
       }
     }
 
@@ -96,3 +99,35 @@ describe("Sampler", () => {
     vi.useRealTimers();
   });
 });
+
+function makeMediaTimeFrameSource(
+  width: number,
+  height: number,
+  rgba: [number, number, number, number],
+  stepSec: number
+): FrameSource {
+  const [r, g, b, a] = rgba;
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = r;
+    data[i + 1] = g;
+    data[i + 2] = b;
+    data[i + 3] = a;
+  }
+
+  let mediaTimeSec = 0;
+
+  return {
+    async readFrame(): Promise<FrameData> {
+      const frame = {
+        rgba: data,
+        width,
+        height,
+        mediaTimeSec,
+        elapsedSource: "currentTime" as const,
+      };
+      mediaTimeSec += stepSec;
+      return frame;
+    },
+  };
+}

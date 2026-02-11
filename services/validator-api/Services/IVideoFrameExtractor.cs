@@ -14,3 +14,8 @@ public interface IVideoFrameExtractor
         int intervalMs,
         CancellationToken ct);
 }
+
+public interface IVideoMetadataReader
+{
+    Task<int?> GetRotationDegreesAsync(Stream videoStream, CancellationToken ct);
+}

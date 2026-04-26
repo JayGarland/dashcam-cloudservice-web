@@ -15,6 +15,7 @@ import {
 } from "../supabase/supabaseApi";
 import type { SupabaseApi } from "../supabase/supabaseApi";
 import { Uploader } from "../supabase/uploader";
+import { resolveValidatorApiBaseUrl, uploadRecordedHashesViaValidatorApi } from "../api/validatorApi";
 
 interface QueueHooks {
   onEnqueue?: (sessionId: string) => void;
@@ -295,6 +296,7 @@ export function initCapturePage(root: HTMLElement): void {
   const baseQueue = new InMemoryHashQueue();
   let uploader: Uploader | null = null;
   let supabaseApi: FetchSupabaseApi | null = null;
+  const validatorApiBaseUrl = resolveValidatorApiBaseUrl();
 
   const apiProxy: SupabaseApi = {
     async insertSession(session) {
@@ -308,6 +310,12 @@ export function initCapturePage(root: HTMLElement): void {
         throw new Error("Supabase is not configured.");
       }
       return supabaseApi.insertFrameHashes(records);
+    },
+    async setReferenceSource(sessionId, referenceSource) {
+      if (!supabaseApi) {
+        throw new Error("Supabase is not configured.");
+      }
+      return supabaseApi.setReferenceSource(sessionId, referenceSource);
     },
   };
 
@@ -383,6 +391,36 @@ export function initCapturePage(root: HTMLElement): void {
       );
     }
     console.groupEnd();
+  }
+
+  async function processRecordedBlob(blob: Blob): Promise<void> {
+    if (!activeSession) {
+      return;
+    }
+    if (!getSession()) {
+      log("Recorded hash upload skipped: not signed in.");
+      return;
+    }
+
+    const intervalMs = activeSession.samplingIntervalMs;
+    try {
+      log("Recorded reference: generating hashes on server...");
+      const accessToken = await getAccessToken();
+      if (!accessToken) {
+        throw new Error("Missing Supabase access token for validator-api.");
+      }
+      const response = await uploadRecordedHashesViaValidatorApi(
+        validatorApiBaseUrl,
+        activeSession.sessionId,
+        blob,
+        intervalMs,
+        accessToken
+      );
+      activeSession.referenceSource = "recorded";
+      log(`Recorded reference ready (${response.storedCount} samples).`);
+    } catch (error) {
+      log(`Recorded reference failed: ${String(error)}`);
+    }
   }
 
   function updateOnlineIndicator(): void {
@@ -559,6 +597,7 @@ export function initCapturePage(root: HTMLElement): void {
       deviceClockStartEpochMs: Date.now(),
       samplingIntervalMs: intervalMs,
       algoVersion: DEFAULT_ALGO_VERSION,
+      referenceSource: "preview",
     };
     uploadedCount = 0;
     lastUploadedIndex = null;
@@ -640,6 +679,7 @@ export function initCapturePage(root: HTMLElement): void {
         recordingDownloadLink.textContent = `Download video (${ext})`;
         recordingDownloadLink.hidden = false;
         log("Local recording ready for download.");
+        void processRecordedBlob(blob);
       } catch (error) {
         log(`Recording stop failed: ${String(error)}`);
       } finally {

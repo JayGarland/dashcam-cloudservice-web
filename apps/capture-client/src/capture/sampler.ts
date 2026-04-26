@@ -94,6 +94,7 @@ export class Sampler {
         uploadState: "pending",
         mediaTimeSec: frame.mediaTimeSec,
         elapsedSource: frame.elapsedSource,
+        source: "preview",
       };
 
       await this.queue.enqueue(record);

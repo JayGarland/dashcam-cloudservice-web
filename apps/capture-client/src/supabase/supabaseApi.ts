@@ -4,6 +4,7 @@ import type { CaptureSession, FrameHashRecord } from "../models";
 export interface SupabaseApi {
   insertSession(session: CaptureSession): Promise<void>;
   insertFrameHashes(records: FrameHashRecord[]): Promise<void>;
+  setReferenceSource(sessionId: string, referenceSource: "preview" | "recorded"): Promise<void>;
 }
 
 export interface SupabaseConfig {
@@ -129,6 +130,7 @@ export class FetchSupabaseApi implements SupabaseApi {
       sampling_interval_ms: session.samplingIntervalMs,
       algo_version: session.algoVersion,
       client_version: session.clientVersion ?? null,
+      reference_source: session.referenceSource ?? "preview",
     });
   }
 
@@ -147,9 +149,20 @@ export class FetchSupabaseApi implements SupabaseApi {
         hash_hex: record.hashHex,
         interval_ms: record.intervalMs,
         algo_version: record.algoVersion,
+        source: record.source ?? "preview",
         created_at: new Date(record.createdAtEpochMs).toISOString(),
       }))
     );
+  }
+
+  async setReferenceSource(
+    sessionId: string,
+    referenceSource: "preview" | "recorded"
+  ): Promise<void> {
+    this.ensureConfigured();
+    await this.patch("capture_sessions", `session_id=eq.${encodeURIComponent(sessionId)}`, {
+      reference_source: referenceSource,
+    });
   }
 
   private ensureConfigured(): void {
@@ -184,6 +197,34 @@ export class FetchSupabaseApi implements SupabaseApi {
       const message = await response.text();
       throw new Error(
         `Supabase insert failed (${response.status}): ${message || response.statusText}`
+      );
+    }
+  }
+
+  private async patch(path: string, query: string, payload: unknown): Promise<void> {
+    if (!this.url || !this.anonKey) {
+      return;
+    }
+    const token = (await this.getAccessToken?.()) ?? this.accessToken;
+    if (!token) {
+      throw new Error("Supabase user session is required before uploads.");
+    }
+
+    const response = await fetch(`${this.url}/rest/v1/${path}?${query}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: this.anonKey,
+        Authorization: `Bearer ${token}`,
+        Prefer: "return=minimal",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(
+        `Supabase update failed (${response.status}): ${message || response.statusText}`
       );
     }
   }

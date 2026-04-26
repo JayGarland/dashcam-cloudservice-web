@@ -64,7 +64,14 @@ public class ClaimsController : ControllerBase
         {
             await using var videoStream = request.Video.OpenReadStream();
             var debugEnabled = IsDebugEnabled(Request);
-            var result = await _verificationService.VerifyAsync(videoStream, sessionId, metadata, ct, debugEnabled);
+            var referenceSource = GetReferenceSourceOverride(Request);
+            var result = await _verificationService.VerifyAsync(
+                videoStream,
+                sessionId,
+                metadata,
+                ct,
+                debugEnabled,
+                referenceSource);
             return Ok(result);
         }
         catch (ValidationException ex)
@@ -112,5 +119,23 @@ public class ClaimsController : ControllerBase
         return value.Equals("1", StringComparison.OrdinalIgnoreCase)
                || value.Equals("true", StringComparison.OrdinalIgnoreCase)
                || value.Equals("yes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? GetReferenceSourceOverride(HttpRequest request)
+    {
+        if (request.Query.TryGetValue("reference", out var referenceValue))
+        {
+            var value = referenceValue.ToString();
+            if (string.Equals(value, "preview", StringComparison.OrdinalIgnoreCase))
+            {
+                return "preview";
+            }
+            if (string.Equals(value, "recorded", StringComparison.OrdinalIgnoreCase))
+            {
+                return "recorded";
+            }
+        }
+
+        return null;
     }
 }

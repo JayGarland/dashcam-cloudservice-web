@@ -231,9 +231,19 @@ public class VerificationServiceTests
             return Task.FromResult(_session);
         }
 
-        public Task<IReadOnlyList<FrameHashRecord>> GetFrameHashesAsync(string sessionId, CancellationToken ct)
+        public Task<IReadOnlyList<FrameHashRecord>> GetFrameHashesAsync(string sessionId, string? source, CancellationToken ct)
         {
             return Task.FromResult(_hashes);
+        }
+
+        public Task InsertFrameHashesAsync(IReadOnlyList<FrameHashRecord> records, CancellationToken ct)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task SetReferenceSourceAsync(string sessionId, string referenceSource, CancellationToken ct)
+        {
+            return Task.CompletedTask;
         }
     }
 

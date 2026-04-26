@@ -112,12 +112,12 @@ public class SupabaseHashStoreTests
             });
         var store = BuildStore(handler);
 
-        var result = await store.GetFrameHashesAsync("session-123", CancellationToken.None);
+        var result = await store.GetFrameHashesAsync("session-123", "preview", CancellationToken.None);
 
         var request = handler.LastRequest;
         Assert.NotNull(request);
         Assert.Equal(HttpMethod.Get, request!.Method);
-        Assert.Equal($"{BaseUrl}/rest/v1/frame_hashes?session_id=eq.session-123&select=*&order=elapsed_ms.asc", request.RequestUri!.ToString());
+        Assert.Equal($"{BaseUrl}/rest/v1/frame_hashes?session_id=eq.session-123&source=eq.preview&select=*&order=elapsed_ms.asc", request.RequestUri!.ToString());
         Assert.Equal(2, result.Count);
         Assert.Equal("abc", result[0].HashHex);
         Assert.Equal(0, result[0].ElapsedMs);
@@ -136,7 +136,52 @@ public class SupabaseHashStoreTests
         var store = BuildStore(handler);
 
         await Assert.ThrowsAsync<SupabaseRequestException>(() =>
-            store.GetFrameHashesAsync("session-123", CancellationToken.None));
+            store.GetFrameHashesAsync("session-123", "preview", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task GetFrameHashesAsync_FallsBackToPreviewWhenRecordedEmpty()
+    {
+        var recordedJson = "[]";
+        var previewJson = "[" +
+                          "{\"session_id\":\"session-123\"," +
+                          "\"sample_index\":0," +
+                          "\"elapsed_ms\":0," +
+                          "\"sample_timestamp_epoch_ms\":1700000000000," +
+                          "\"hash_hex\":\"abc\"," +
+                          "\"interval_ms\":500," +
+                          "\"algo_version\":\"dhash64_v1\"," +
+                          "\"created_at_epoch_ms\":1700000000100," +
+                          "\"upload_state\":\"uploaded\"}" +
+                          "]";
+
+        var handler = new FakeHttpMessageHandler(request =>
+        {
+            var uri = request.RequestUri?.ToString() ?? string.Empty;
+            if (uri.Contains("source=eq.recorded", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(recordedJson, Encoding.UTF8, "application/json")
+                };
+            }
+
+            if (uri.Contains("source=eq.preview", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(previewJson, Encoding.UTF8, "application/json")
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var store = BuildStore(handler);
+        var result = await store.GetFrameHashesAsync("session-123", "recorded", CancellationToken.None);
+
+        Assert.Single(result);
+        Assert.Equal("abc", result[0].HashHex);
     }
 
     private static SupabaseHashStore BuildStore(FakeHttpMessageHandler handler)

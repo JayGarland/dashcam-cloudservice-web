@@ -38,7 +38,8 @@ public class VerificationService
         string sessionId,
         VerifyClaimMetadata? metadataOverride,
         CancellationToken ct,
-        bool debugEnabled = false)
+        bool debugEnabled = false,
+        string? referenceSourceOverride = null)
     {
         if (videoStream is null)
         {
@@ -93,8 +94,17 @@ public class VerificationService
 
         var intervalMs = samplingIntervalMs > 0 ? samplingIntervalMs : DefaultIntervalMs;
 
-        var reference = await _store.GetFrameHashesAsync(normalizedSessionId, ct) ?? Array.Empty<FrameHashRecord>();
+        var preferredSource = referenceSourceOverride;
+        if (string.IsNullOrWhiteSpace(preferredSource))
+        {
+            preferredSource = string.IsNullOrWhiteSpace(session.ReferenceSource)
+                ? "recorded"
+                : session.ReferenceSource;
+        }
+
+        var reference = await _store.GetFrameHashesAsync(normalizedSessionId, preferredSource, ct) ?? Array.Empty<FrameHashRecord>();
         var orderedReference = reference.OrderBy(r => r.ElapsedMs).ToList();
+        var referenceSourceUsed = ResolveReferenceSource(preferredSource, orderedReference);
 
         int? rotationDegrees = null;
         Stream extractionStream = videoStream;
@@ -139,13 +149,27 @@ public class VerificationService
         }
 
         VerificationDebugMetrics? debugMetrics = null;
+        double? selfCheckMatchRatio = null;
+        double? selfCheckAvgDist = null;
         if (debugEnabled)
         {
+            if (candidates.Count > 0)
+            {
+                var selfCheckMatcher = new HashMatcher(DefaultDistanceThreshold, toleranceMs);
+                var (selfMatched, selfAvgDist, _, _) = selfCheckMatcher.Match(candidates, candidates, intervalMs);
+                var expectedSelf = candidates.Count;
+                selfCheckMatchRatio = expectedSelf > 0 ? selfMatched / (double)expectedSelf : 0d;
+                selfCheckAvgDist = selfAvgDist;
+            }
             debugMetrics = BuildDebugMetrics(
                 normalizedSessionId,
                 samplingIntervalMs,
                 toleranceMs,
+                intervalMs,
                 rotationDegrees,
+                referenceSourceUsed,
+                selfCheckMatchRatio,
+                selfCheckAvgDist,
                 orderedReference,
                 candidates,
                 frameList);
@@ -220,7 +244,11 @@ public class VerificationService
         string sessionId,
         int sessionSamplingIntervalMs,
         int toleranceMs,
+        int candidateIntervalMs,
         int? rotationDegrees,
+        string referenceSourceUsed,
+        double? selfCheckMatchRatio,
+        double? selfCheckAvgDist,
         IReadOnlyList<FrameHashRecord> reference,
         IReadOnlyList<FrameHashRecord> candidates,
         IReadOnlyList<ExtractedFrame> frames)
@@ -239,6 +267,9 @@ public class VerificationService
 
         var diagnostics = BuildDistanceDiagnostics(reference, candidates, toleranceMs, DefaultDistanceThreshold);
         var sampleStats = diagnostics.Stats.Take(DebugSampleCount).ToList();
+        var referenceFirst5 = reference.Take(5).Select(sample => sample.ElapsedMs).ToList();
+        var candidateFirst5 = candidates.Take(5).Select(sample => sample.ElapsedMs).ToList();
+        var referenceIntervalMs = reference.Count > 0 ? reference[0].IntervalMs : (int?)null;
 
         return new VerificationDebugMetrics
         {
@@ -248,8 +279,16 @@ public class VerificationService
             Threshold = DefaultDistanceThreshold,
             ReferenceHashCount = reference.Count,
             ExtractedFrameCount = frames.Count,
+            CandidateFrameCount = candidates.Count,
+            ReferenceIntervalMs = referenceIntervalMs,
+            CandidateIntervalMs = candidateIntervalMs,
+            ReferenceFirst5ElapsedMs = referenceFirst5,
+            CandidateFirst5ElapsedMs = candidateFirst5,
             ExtractedElapsedMsRange = elapsedRange,
+            SelfCheckMatchRatio = selfCheckMatchRatio,
+            SelfCheckAvgDist = selfCheckAvgDist,
             RotationDegrees = rotationDegrees,
+            ReferenceSourceUsed = referenceSourceUsed,
             CountNoCandidates = diagnostics.CountNoCandidates,
             CountTooDissimilar = diagnostics.CountTooDissimilar,
             BestDistanceHistogram = diagnostics.Histogram,
@@ -358,6 +397,23 @@ public class VerificationService
         {
             histogram.Bucket21To64 += 1;
         }
+    }
+
+    private static string ResolveReferenceSource(
+        string? referenceSourceOverride,
+        IReadOnlyList<FrameHashRecord> reference)
+    {
+        if (!string.IsNullOrWhiteSpace(referenceSourceOverride))
+        {
+            return referenceSourceOverride;
+        }
+
+        if (reference.Count > 0 && !string.IsNullOrWhiteSpace(reference[0].Source))
+        {
+            return reference[0].Source;
+        }
+
+        return "preview";
     }
 
     private readonly record struct DeltaSweepResult(int BestDeltaMs, int BestMatched);

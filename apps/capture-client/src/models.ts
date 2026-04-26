@@ -6,6 +6,7 @@ export interface CaptureSession {
   samplingIntervalMs: number;
   algoVersion: AlgoVersion;
   clientVersion?: string;
+  referenceSource?: "preview" | "recorded";
 }
 
 export interface FrameHashRecord {
@@ -20,4 +21,5 @@ export interface FrameHashRecord {
   uploadState: "pending" | "uploaded";
   mediaTimeSec?: number;
   elapsedSource?: "rvfc" | "currentTime";
+  source?: "preview" | "recorded";
 }

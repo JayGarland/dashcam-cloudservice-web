@@ -7,6 +7,7 @@ public class CaptureSession
     public int SamplingIntervalMs { get; set; }
     public string AlgoVersion { get; set; } = "dhash64_v1";
     public string? ClientVersion { get; set; }
+    public string ReferenceSource { get; set; } = "preview";
 }
 
 public class FrameHashRecord
@@ -20,4 +21,5 @@ public class FrameHashRecord
     public string AlgoVersion { get; set; } = "dhash64_v1";
     public long CreatedAtEpochMs { get; set; }
     public string UploadState { get; set; } = "pending";
+    public string Source { get; set; } = "preview";
 }

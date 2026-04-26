@@ -43,10 +43,18 @@ public class VerificationDebugMetrics
     public int Threshold { get; set; }
     public int ReferenceHashCount { get; set; }
     public int ExtractedFrameCount { get; set; }
+    public int CandidateFrameCount { get; set; }
+    public int? ReferenceIntervalMs { get; set; }
+    public int CandidateIntervalMs { get; set; }
+    public List<int> ReferenceFirst5ElapsedMs { get; set; } = new();
+    public List<int> CandidateFirst5ElapsedMs { get; set; } = new();
     public DebugElapsedMsRange? ExtractedElapsedMsRange { get; set; }
     public int? BestDeltaMs { get; set; }
     public int? BestMatchedSamples { get; set; }
+    public double? SelfCheckMatchRatio { get; set; }
+    public double? SelfCheckAvgDist { get; set; }
     public int? RotationDegrees { get; set; }
+    public string ReferenceSourceUsed { get; set; } = "unknown";
     public int CountNoCandidates { get; set; }
     public int CountTooDissimilar { get; set; }
     public BestDistanceHistogram BestDistanceHistogram { get; set; } = new();
